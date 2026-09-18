@@ -6,6 +6,8 @@ import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
 import { createSoloRoutes } from "./api/soloRoutes.js";
+import { MultiplayerRoomManager } from "./multiplayer/multiplayerRoomManager.js";
+import { managerCallbacks, registerMultiplayerGateway } from "./multiplayer/socketGateway.js";
 import { QuestionRepository } from "./question/questionRepository.js";
 import { SoloSessionManager } from "./solo/soloSessionManager.js";
 
@@ -36,10 +38,11 @@ app.get("/api/questions/validation", (_request, response) => {
 const io = new Server(httpServer, {
   cors: { origin: true, credentials: true },
 });
-
-io.on("connection", (socket) => {
-  socket.emit("server:ready", { connectedAt: Date.now() });
+const multiplayerRoomManager = new MultiplayerRoomManager(questionRepository, {
+  onRoomUpdated: (roomCode) => managerCallbacks.get(multiplayerRoomManager)?.update(roomCode),
+  onRoomClosed: (roomCode, message) => managerCallbacks.get(multiplayerRoomManager)?.close(roomCode, message),
 });
+registerMultiplayerGateway(io, multiplayerRoomManager);
 
 const webDist = join(currentDir, "../../web/dist");
 

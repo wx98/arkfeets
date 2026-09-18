@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import Phaser from "phaser";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { SoloGameView, SoloState } from "../types";
-
 const props = defineProps<{
-  question: SoloGameView["question"];
-  reveal?: SoloGameView["reveal"];
-  state: SoloState;
+  question: { id: string; imageUrl: string };
+  reveal?: { imageUrl: string };
+  state: "ANSWERING" | "REVEAL" | "FINISHED";
 }>();
 
 const host = ref<HTMLDivElement>();

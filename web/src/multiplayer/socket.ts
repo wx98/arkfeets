@@ -1,0 +1,61 @@
+import { io } from "socket.io-client";
+import type { Difficulty, MultiplayerRoomView } from "../types";
+
+const socket = io({ autoConnect: true });
+
+interface AckSuccess { ok: true; room: MultiplayerRoomView | null }
+interface AckFailure { ok: false; message: string }
+type AckResponse = AckSuccess | AckFailure;
+
+export function getClientSessionId(): string {
+  const key = "arkfeets:session-id";
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  localStorage.setItem(key, created);
+  return created;
+}
+
+export const multiplayerSocket = {
+  create(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number }) {
+    return emit("room:create", input);
+  },
+  join(input: { roomCode: string; sessionId: string; nickname: string }) {
+    return emit("room:join", input);
+  },
+  start(roomCode: string) {
+    return emit("room:start", { roomCode });
+  },
+  answer(roomCode: string, answer: string) {
+    return emit("room:answer", { roomCode, answer });
+  },
+  next(roomCode: string) {
+    return emit("room:next", { roomCode });
+  },
+  skipRanking(roomCode: string) {
+    return emit("room:skip-ranking", { roomCode });
+  },
+  leave(roomCode: string) {
+    return emit("room:leave", { roomCode });
+  },
+  onUpdate(listener: (room: MultiplayerRoomView) => void) {
+    socket.on("room:update", listener);
+    return () => socket.off("room:update", listener);
+  },
+  onClosed(listener: (event: { message: string }) => void) {
+    socket.on("room:closed", listener);
+    return () => socket.off("room:closed", listener);
+  },
+};
+
+function emit(event: string, payload: unknown): Promise<MultiplayerRoomView | null> {
+  if (!socket.connected) socket.connect();
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("连接服务器超时")), 6_000);
+    socket.emit(event, payload, (response: AckResponse) => {
+      window.clearTimeout(timer);
+      if (!response.ok) reject(new Error(response.message));
+      else resolve(response.room);
+    });
+  });
+}

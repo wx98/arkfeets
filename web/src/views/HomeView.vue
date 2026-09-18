@@ -1,14 +1,21 @@
 <script setup lang="ts">
 import { Database, Play, Users } from "lucide-vue-next";
 import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 const router = useRouter();
+const route = useRoute();
 const nickname = ref(localStorage.getItem("arkfeets:nickname") ?? "博士");
+const notice = ref(typeof route.query.notice === "string" ? route.query.notice : "");
 
 function enterSolo() {
   localStorage.setItem("arkfeets:nickname", nickname.value.trim() || "博士");
   router.push("/solo");
+}
+
+function enterMulti() {
+  localStorage.setItem("arkfeets:nickname", nickname.value.trim() || "博士");
+  router.push("/multi");
 }
 </script>
 
@@ -31,9 +38,10 @@ function enterSolo() {
         </div>
         <div class="mode-actions">
           <button class="button button--primary" @click="enterSolo"><Play :size="19" />单人挑战</button>
-          <button class="button" disabled><Users :size="19" />多人房间 <span>开发中</span></button>
+          <button class="button" @click="enterMulti"><Users :size="19" />多人房间</button>
           <button class="button" disabled><Database :size="19" />题库管理 <span>开发中</span></button>
         </div>
+        <p v-if="notice" class="home-notice">{{ notice }}</p>
       </div>
       <div class="hero-visual" aria-hidden="true">
         <div class="hero-visual__signal">READY<br /><small>等待指令</small></div>

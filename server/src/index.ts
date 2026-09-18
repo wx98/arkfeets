@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
+import { createSoloRoutes } from "./api/soloRoutes.js";
+import { QuestionRepository } from "./question/questionRepository.js";
+import { SoloSessionManager } from "./solo/soloSessionManager.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -14,8 +17,20 @@ const host = process.env.HOST ?? "0.0.0.0";
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const questionDirectory = join(currentDir, "../resource/question");
+const questionRepository = new QuestionRepository(questionDirectory);
+const soloSessionManager = new SoloSessionManager(questionRepository);
+
+app.use("/questions", express.static(questionDirectory));
+app.use("/api/solo", createSoloRoutes(soloSessionManager));
+
 app.get("/api/health", (_request, response) => {
-  response.json({ ok: true, time: Date.now() });
+  response.json({ ok: true, time: Date.now(), questions: questionRepository.getValidationReport().validCount });
+});
+
+app.get("/api/questions/validation", (_request, response) => {
+  response.json(questionRepository.getValidationReport());
 });
 
 const io = new Server(httpServer, {
@@ -26,7 +41,6 @@ io.on("connection", (socket) => {
   socket.emit("server:ready", { connectedAt: Date.now() });
 });
 
-const currentDir = dirname(fileURLToPath(import.meta.url));
 const webDist = join(currentDir, "../../web/dist");
 
 if (existsSync(webDist)) {

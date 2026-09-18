@@ -1,0 +1,10 @@
+{
+  "title": "任务地点",
+  "answers": ["作战室", "指挥室"],
+  "hint": "任务开始前会聚集在这里",
+  "difficulty": ["simple", "medium", "hard", "hell"],
+  "tags": ["示例", "场景"],
+  "questionImg": "question.png",
+  "answerRevealImg": "full.png",
+  "enabled": true
+}

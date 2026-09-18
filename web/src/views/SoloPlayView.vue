@@ -83,7 +83,7 @@ const endReasonText = computed(() => ({
   <main class="play-page">
     <header class="topbar play-topbar">
       <button class="icon-button" title="退出本局" @click="router.push('/')"><ArrowLeft :size="20" /></button>
-      <div class="round-label" v-if="game">QUESTION {{ String(game.question.index).padStart(2, '0') }} / {{ String(game.question.total).padStart(2, '0') }}</div>
+      <div class="round-label" v-if="game"><small>IMAGE IDENTIFICATION</small> QUESTION {{ String(game.question.index).padStart(2, '0') }} / {{ String(game.question.total).padStart(2, '0') }}</div>
       <div class="play-stats" v-if="game">
         <span><Trophy :size="17" />{{ game.stats.score }}</span>
         <span><Heart :size="17" />{{ game.stats.lives }}</span>
@@ -98,6 +98,7 @@ const endReasonText = computed(() => ({
       <div class="timer-track"><div :style="{ width: `${progress}%` }" /></div>
       <section class="game-layout">
         <div class="game-stage">
+          <div class="stage-label"><span>OPTICAL FEED</span><strong>LIVE</strong></div>
           <div class="canvas-wrap">
             <GameCanvas :question="game.question" :reveal="game.reveal" :state="game.state" />
             <div v-if="game.feedback" class="feedback-banner">{{ game.feedback }}</div>
@@ -107,7 +108,7 @@ const endReasonText = computed(() => ({
         <aside class="answer-panel">
           <template v-if="game.state === 'ANSWERING'">
             <div>
-              <p class="eyebrow">YOUR ANSWER</p>
+              <p class="eyebrow">YOUR ANSWER / 识别结果</p>
               <h2>识别目标</h2>
             </div>
             <form class="answer-form" @submit.prevent="submit">
@@ -120,7 +121,7 @@ const endReasonText = computed(() => ({
 
           <template v-else-if="game.state === 'REVEAL'">
             <div>
-              <p class="eyebrow">IDENTIFIED</p>
+              <p class="eyebrow">IDENTIFIED / 档案确认</p>
               <h2>{{ game.reveal?.answers[0] }}</h2>
               <p class="answer-aliases" v-if="(game.reveal?.answers.length ?? 0) > 1">可接受：{{ game.reveal?.answers.join(' / ') }}</p>
             </div>
@@ -130,7 +131,7 @@ const endReasonText = computed(() => ({
 
           <template v-else>
             <div class="result-block">
-              <p class="eyebrow">MISSION REPORT</p>
+              <p class="eyebrow">MISSION REPORT / 行动报告</p>
               <h2>{{ endReasonText }}</h2>
               <div class="result-score">{{ game.stats.score }}<small>分</small></div>
               <dl><div><dt>完成题目</dt><dd>{{ game.stats.attempted }}</dd></div><div><dt>正确率</dt><dd>{{ game.stats.correctRate }}%</dd></div><div><dt>剩余生命</dt><dd>{{ game.stats.lives }}</dd></div></dl>

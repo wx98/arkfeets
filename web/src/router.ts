@@ -5,6 +5,7 @@ import SoloSetupView from "./views/SoloSetupView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior: () => ({ top: 0 }),
   routes: [
     { path: "/", component: HomeView },
     { path: "/solo", component: SoloSetupView },

@@ -19,12 +19,12 @@ class GuessScene extends Phaser.Scene {
 
   create() {
     scene = this;
-    this.cameras.main.setBackgroundColor("#16191f");
-    this.add.rectangle(480, 260, 844, 444, 0x0d0f13).setStrokeStyle(1, 0x59606d);
-    this.add.text(58, 24, "VISUAL FEED", {
-      color: "#e6ff55",
+    this.cameras.main.setBackgroundColor("#101214");
+    this.add.rectangle(480, 260, 854, 446, 0x080a0b).setStrokeStyle(2, 0xf2ff3d);
+    this.add.text(54, 19, "PRTS // VISUAL FEED", {
+      color: "#f2ff3d",
       fontFamily: "Arial, sans-serif",
-      fontSize: "13px",
+      fontSize: "12px",
       fontStyle: "bold",
     });
     renderCurrent();
@@ -37,11 +37,11 @@ class GuessScene extends Phaser.Scene {
       this.imageMask?.destroy();
       const texture = this.textures.get(key).getSourceImage() as HTMLImageElement;
       const image = this.add.image(480, 260, key);
-      const frameWidth = 840;
-      const frameHeight = 440;
+      const frameWidth = 850;
+      const frameHeight = 442;
       const scale = Math.min(frameWidth / texture.width, frameHeight / texture.height);
       image.setScale(scale);
-      const maskShape = this.make.graphics({ x: 0, y: 0 }).fillStyle(0xffffff).fillRect(60, 40, frameWidth, frameHeight);
+      const maskShape = this.make.graphics({ x: 0, y: 0 }).fillStyle(0xffffff).fillRect(55, 39, frameWidth, frameHeight);
       this.imageMask = maskShape.createGeometryMask();
       image.setMask(this.imageMask);
       this.currentImage = image;

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,9 @@ import express from "express";
 import { Server } from "socket.io";
 import { createSoloRoutes } from "./api/soloRoutes.js";
 import { createGameRoutes } from "./api/gameRoutes.js";
+import { createAdminRoutes } from "./api/adminRoutes.js";
+import { AdminSessionManager } from "./admin/adminSessionManager.js";
+import { QuestionAdminService } from "./admin/questionAdminService.js";
 import { MultiplayerRoomManager } from "./multiplayer/multiplayerRoomManager.js";
 import { managerCallbacks, registerMultiplayerGateway } from "./multiplayer/socketGateway.js";
 import { QuestionRepository } from "./question/questionRepository.js";
@@ -22,11 +25,18 @@ app.use(express.json({ limit: "1mb" }));
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const questionDirectory = join(currentDir, "../resource/question");
+const config = JSON.parse(readFileSync(join(currentDir, "../config.json"), "utf8")) as {
+  adminPassword: string;
+  adminSessionHours?: number;
+};
 const questionRepository = new QuestionRepository(questionDirectory);
 const soloSessionManager = new SoloSessionManager(questionRepository);
+const adminSessions = new AdminSessionManager(config.adminPassword, (config.adminSessionHours ?? 8) * 60 * 60 * 1000);
+const questionAdminService = new QuestionAdminService(questionDirectory, questionRepository);
 
 app.use("/questions", express.static(questionDirectory));
 app.use("/api/solo", createSoloRoutes(soloSessionManager));
+app.use("/api/admin", createAdminRoutes(adminSessions, questionAdminService));
 
 app.get("/api/health", (_request, response) => {
   response.json({ ok: true, time: Date.now(), questions: questionRepository.getValidationReport().validCount });

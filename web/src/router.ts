@@ -4,6 +4,7 @@ import MultiplayerRoomView from "./views/MultiplayerRoomView.vue";
 import MultiplayerSetupView from "./views/MultiplayerSetupView.vue";
 import SoloPlayView from "./views/SoloPlayView.vue";
 import SoloSetupView from "./views/SoloSetupView.vue";
+import AdminView from "./views/AdminView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -14,6 +15,7 @@ export const router = createRouter({
     { path: "/solo/play", component: SoloPlayView },
     { path: "/multi", component: MultiplayerSetupView },
     { path: "/multi/:roomCode", component: MultiplayerRoomView },
+    { path: "/admin", component: AdminView },
     {
       path: "/:pathMatch(.*)*",
       redirect: "/",

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { difficulties, type Difficulty, type Question, type QuestionValidationItem } from "./types.js";
 
-const infoSchema = z.object({
+export const questionInfoSchema = z.object({
   title: z.string().trim().min(1).optional(),
   answers: z.array(z.string().trim().min(1)).min(1),
   hint: z.string().trim().min(1).optional(),
@@ -14,7 +14,7 @@ const infoSchema = z.object({
   enabled: z.boolean().optional(),
 });
 
-const catalogueSchema = z.object({
+export const catalogueSchema = z.object({
   version: z.number().int().positive(),
   questionIds: z.array(z.string().trim().min(1)),
 });
@@ -35,6 +35,12 @@ export class QuestionRepository {
     };
   }
 
+  reload(): void {
+    this.questions.length = 0;
+    this.validationItems.length = 0;
+    this.load();
+  }
+
   drawQuestions(difficulty: Difficulty, requestedCount: number): Question[] {
     const pool = this.questions.filter((question) => question.enabled && question.difficulty.includes(difficulty));
     for (let index = pool.length - 1; index > 0; index -= 1) {
@@ -52,7 +58,7 @@ export class QuestionRepository {
       const errors: string[] = [];
       try {
         const questionDirectory = join(this.rootDirectory, id);
-        const info = infoSchema.parse(JSON.parse(readFileSync(join(questionDirectory, "info.json"), "utf8")));
+        const info = questionInfoSchema.parse(JSON.parse(readFileSync(join(questionDirectory, "info.json"), "utf8")));
         for (const imageName of [info.questionImg, info.answerRevealImg]) {
           if (!existsSync(join(questionDirectory, imageName))) errors.push(`缺少图片 ${imageName}`);
         }

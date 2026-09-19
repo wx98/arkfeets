@@ -17,6 +17,10 @@ function enterMulti() {
   localStorage.setItem("arkfeets:nickname", nickname.value.trim() || "博士");
   router.push("/multi");
 }
+
+function enterAdmin() {
+  router.push("/admin");
+}
 </script>
 
 <template>
@@ -39,7 +43,7 @@ function enterMulti() {
         <div class="mode-actions">
           <button class="button button--primary" @click="enterSolo"><Play :size="19" />单人挑战</button>
           <button class="button" @click="enterMulti"><Users :size="19" />多人房间</button>
-          <button class="button" disabled><Database :size="19" />题库管理 <span>开发中</span></button>
+          <button class="button" @click="enterAdmin"><Database :size="19" />题库管理</button>
         </div>
         <p v-if="notice" class="home-notice">{{ notice }}</p>
       </div>

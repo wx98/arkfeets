@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Database, Download, FilePlus2,
-  FolderOpen, FolderUp, Image as ImageIcon, Images, ListTree, LogIn, LogOut, Plus,
-  Save, Scissors, Search, Trash2, Upload,
+  FolderOpen, FolderUp, Image as ImageIcon, Images, ListTree, LogIn, LogOut, PanelLeftClose,
+  PanelLeftOpen, Plus, Save, Scissors, Search, Trash2, Upload,
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { Cropper } from "vue-advanced-cropper";
@@ -60,6 +60,7 @@ const password = ref("");
 const library = ref<Library>();
 const mode = ref<"images" | "questions">("images");
 const searchText = ref("");
+const sidebarCollapsed = ref(false);
 const selectedImageName = ref("");
 const expandedImageName = ref("");
 const selectedQuestionId = ref("");
@@ -71,6 +72,8 @@ const metadataTagText = ref("");
 const cropper = ref<InstanceType<typeof Cropper>>();
 const cropAspect = ref<number | undefined>();
 const cropConfirmed = ref(false);
+const hoveredQuestion = ref<LibraryQuestion>();
+const questionPreviewPosition = ref({ x: 0, y: 0 });
 const busy = ref(false);
 const message = ref("");
 const error = ref("");
@@ -98,6 +101,12 @@ const filteredQuestions = computed(() => (library.value?.questions ?? []).filter
     ...(question.info?.answers ?? []), ...(question.info?.tags ?? []),
   ].filter(Boolean).join(" ")).includes(normalizedNeedle.value);
 }));
+const questionPreview = computed(() => {
+  const question = hoveredQuestion.value;
+  const crop = question?.info?.question;
+  if (!question || !crop || !question.originalImageUrl) return undefined;
+  return { crop, imageUrl: question.originalImageUrl, style: questionPreviewStyle(question) };
+});
 const modeStats = computed(() => mode.value === "images"
   ? { total: library.value?.images.length ?? 0, valid: (library.value?.images ?? []).reduce((sum, image) => sum + image.validCount, 0), invalid: (library.value?.images ?? []).reduce((sum, image) => sum + image.invalidCount, 0) }
   : { total: library.value?.questions.length ?? 0, valid: library.value?.validCount ?? 0, invalid: library.value?.invalidCount ?? 0 });
@@ -196,8 +205,14 @@ function restoreCrop() {
 }
 
 function confirmCrop() {
+  if (!captureCurrentCrop()) return;
+  cropConfirmed.value = true;
+  message.value = "当前裁切已确认，保存题目后生效";
+}
+
+function captureCurrentCrop(): boolean {
   const result = cropper.value?.getResult() as { coordinates?: { left: number; top: number; width: number; height: number }; image?: { width: number; height: number } } | undefined;
-  if (!result?.coordinates || !result.image) { error.value = "请先在原图上框选谜面"; return; }
+  if (!result?.coordinates || !result.image) { error.value = "请先在原图上框选谜面"; return false; }
   form.value.question = {
     x: Math.round(result.coordinates.left),
     y: Math.round(result.coordinates.top),
@@ -206,19 +221,22 @@ function confirmCrop() {
     sourceWidth: Math.round(result.image.width),
     sourceHeight: Math.round(result.image.height),
   };
-  cropConfirmed.value = true;
-  message.value = "当前裁切已确认，保存题目后生效";
+  return true;
 }
 
 async function saveQuestion() {
   if (!canSaveQuestion.value) { error.value = "请先填写标题并确认谜面裁切"; return; }
+  if (!captureCurrentCrop()) return;
   await perform(async () => {
     const payload = {
-      ...form.value,
       title: form.value.title.trim(),
       answers: form.value.answers.map((answer) => answer.trim()).filter(Boolean),
       hint: form.value.hint.trim(),
+      difficulty: [...form.value.difficulty],
       tags: tagText.value.split(/[，,]/u).map((tag) => tag.trim()).filter(Boolean),
+      originalImage: form.value.originalImage,
+      question: form.value.question,
+      enabled: form.value.enabled,
     };
     if (isNew.value) {
       const result = await api<{ id: string }>("/api/admin/questions", { method: "POST", body: JSON.stringify(payload) });
@@ -322,6 +340,30 @@ function emptyQuestion(): QuestionRecord {
 }
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLocaleLowerCase(); }
+function imageLabel(fileName: string) { return fileName.replace(/\.(png|jpe?g|webp|gif)$/iu, ""); }
+
+function showQuestionPreview(question: LibraryQuestion, event: MouseEvent) {
+  hoveredQuestion.value = question;
+  moveQuestionPreview(event);
+}
+
+function moveQuestionPreview(event: MouseEvent) {
+  questionPreviewPosition.value = { x: event.clientX + 18, y: event.clientY + 18 };
+}
+
+function questionPreviewStyle(question: LibraryQuestion) {
+  const crop = question.info?.question;
+  if (!crop) return {};
+  const aspect = crop.width / crop.height;
+  const width = aspect >= 280 / 220 ? 280 : 220 * aspect;
+  const height = width / aspect;
+  return {
+    width: `${width}px`,
+    height: `${height}px`,
+    left: `${Math.min(questionPreviewPosition.value.x, window.innerWidth - width - 12)}px`,
+    top: `${Math.min(questionPreviewPosition.value.y, window.innerHeight - height - 12)}px`,
+  };
+}
 </script>
 
 <template>
@@ -329,6 +371,9 @@ function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLoc
     <header class="topbar">
       <button class="icon-button" title="返回首页" @click="router.push('/')"><ArrowLeft :size="18" /></button>
       <div class="brand-mark">题库管理 <small>ARCHIVE CONTROL</small></div>
+      <button v-if="token" class="icon-button admin-sidebar-toggle" :title="sidebarCollapsed ? '展开左侧目录' : '隐藏左侧目录'" @click="sidebarCollapsed = !sidebarCollapsed">
+        <PanelLeftOpen v-if="sidebarCollapsed" :size="18" /><PanelLeftClose v-else :size="18" />
+      </button>
       <button v-if="token" class="icon-button admin-logout" title="退出后台" @click="logout"><LogOut :size="18" /></button>
     </header>
 
@@ -344,7 +389,7 @@ function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLoc
       <p v-if="error" class="error-text">{{ error }}</p>
     </section>
 
-    <section v-else-if="library" class="admin-workbench">
+    <section v-else-if="library" class="admin-workbench" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
       <aside class="admin-sidebar">
         <div class="admin-view-tabs">
           <button :class="{ active: mode === 'images' }" @click="mode = 'images'"><Images :size="16" />原图</button>
@@ -364,13 +409,16 @@ function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLoc
 
         <nav v-if="mode === 'images'" class="asset-list" aria-label="原图列表">
           <div v-for="image in filteredImages" :key="image.fileName" class="asset-group" :class="{ active: selectedImageName === image.fileName }">
-            <button class="asset-row" @click="toggleImage(image)">
-              <ImageIcon :size="16" />
-              <span>{{ image.fileName }}</span>
+            <div class="asset-row">
+              <button class="asset-row__main" @click="toggleImage(image)">
+                <ImageIcon :size="16" />
+                <span>{{ imageLabel(image.fileName) }}</span>
+                <span class="asset-hover-preview"><img :src="image.url" :alt="image.fileName" /></span>
+              </button>
+              <button class="asset-row__add" title="基于此原图新增题目" @click="beginQuestion(image)"><Plus :size="14" /></button>
               <small>{{ image.validCount }}/{{ image.totalCount }}</small>
-              <ChevronDown :size="15" :class="{ open: expandedImageName === image.fileName }" />
-              <span class="asset-hover-preview"><img :src="image.url" :alt="image.fileName" /></span>
-            </button>
+              <button class="asset-row__expand" :title="expandedImageName === image.fileName ? '收起题目' : '展开题目'" @click="toggleImage(image)"><ChevronDown :size="15" :class="{ open: expandedImageName === image.fileName }" /></button>
+            </div>
             <div v-if="expandedImageName === image.fileName" class="asset-questions">
               <button class="asset-add-question" title="基于此原图新增题目" @click="beginQuestion(image)"><Plus :size="15" />新增题目</button>
               <button v-for="question in relatedQuestions(image)" :key="question.id" @click="selectQuestion(question)">
@@ -384,13 +432,10 @@ function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLoc
         </nav>
 
         <nav v-else class="question-list" aria-label="题目列表">
-          <button v-for="question in filteredQuestions" :key="question.id" :class="{ active: selectedQuestionId === question.id }" @click="selectQuestion(question)">
+          <button v-for="question in filteredQuestions" :key="question.id" :class="{ active: selectedQuestionId === question.id }" @click="selectQuestion(question)" @mouseenter="showQuestionPreview(question, $event)" @mousemove="moveQuestionPreview" @mouseleave="hoveredQuestion = undefined">
             <component :is="question.validation.valid ? CheckCircle2 : AlertTriangle" :size="15" />
             <span>{{ question.info?.title || question.id }}</span>
-            <small>{{ question.info?.originalImage || '未关联原图' }}</small>
-            <span v-if="question.info?.question && question.originalImageUrl" class="asset-hover-preview crop-thumb" :style="{ aspectRatio: `${question.info.question.width}/${question.info.question.height}` }">
-              <img :src="question.originalImageUrl" :style="{ width: `${question.info.question.sourceWidth / question.info.question.width * 100}%`, height: `${question.info.question.sourceHeight / question.info.question.height * 100}%`, left: `${-question.info.question.x / question.info.question.width * 100}%`, top: `${-question.info.question.y / question.info.question.height * 100}%` }" alt="" />
-            </span>
+            <small>{{ question.info?.originalImage ? imageLabel(question.info.originalImage) : '未关联原图' }}</small>
           </button>
         </nav>
       </aside>
@@ -403,7 +448,22 @@ function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLoc
         <div v-if="selectedQuestion?.validation.errors.length" class="validation-errors"><AlertTriangle :size="17" /><p>{{ selectedQuestion.validation.errors.join('；') }}</p></div>
 
         <section class="admin-form-section">
-          <div class="admin-section-title"><span>01</span><div><strong>题目信息</strong><small>QUESTION DATA</small></div></div>
+          <div class="admin-section-title"><span>01</span><div><strong>谜底与谜面</strong><small>ORIGINAL / CROP</small></div></div>
+          <div class="image-dual-preview">
+            <figure><figcaption>谜底 · 完整原图</figcaption><img :src="currentImageUrl" alt="完整原图" /></figure>
+            <figure><figcaption>谜面 · 实时裁切</figcaption><div v-if="form.question" class="crop-preview" :style="{ aspectRatio: previewRatio }"><img :src="currentImageUrl" :style="previewStyle" alt="谜面预览" /></div><div v-else class="crop-preview crop-preview--empty">尚未确认裁切</div></figure>
+          </div>
+          <div class="crop-ratios">
+            <button :class="{ active: cropAspect === 16 / 9 }" @click="cropAspect = 16 / 9">16:9</button>
+            <button :class="{ active: cropAspect === 1 }" @click="cropAspect = 1">1:1</button>
+            <button :class="{ active: !cropAspect }" @click="cropAspect = undefined">自由</button>
+          </div>
+          <Cropper v-if="currentImageUrl" ref="cropper" class="question-cropper" :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }" image-restriction="stencil" @ready="restoreCrop" />
+          <button class="button crop-confirm" :disabled="busy" @click="confirmCrop"><Scissors :size="18" />确认当前裁切</button>
+        </section>
+
+        <section class="admin-form-section">
+          <div class="admin-section-title"><span>02</span><div><strong>题目信息</strong><small>QUESTION DATA</small></div></div>
           <div class="admin-form-grid">
             <label class="wide">标题<input v-model="form.title" maxlength="100" placeholder="必填，输入题目标题" /></label>
             <label class="wide">关联原图<input :value="form.originalImage" disabled /></label>
@@ -418,21 +478,6 @@ function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLoc
             <label class="wide">标签<input v-model="tagText" placeholder="使用逗号分隔" /></label>
             <fieldset class="wide difficulty-checks"><legend>适用难度</legend><label v-for="item in difficultyOptions" :key="item.value"><input v-model="form.difficulty" type="checkbox" :value="item.value" />{{ item.label }}</label></fieldset>
           </div>
-        </section>
-
-        <section class="admin-form-section">
-          <div class="admin-section-title"><span>02</span><div><strong>谜底与谜面</strong><small>ORIGINAL / CROP</small></div></div>
-          <div class="image-dual-preview">
-            <figure><figcaption>谜底 · 完整原图</figcaption><img :src="currentImageUrl" alt="完整原图" /></figure>
-            <figure><figcaption>谜面 · 实时裁切</figcaption><div v-if="form.question" class="crop-preview" :style="{ aspectRatio: previewRatio }"><img :src="currentImageUrl" :style="previewStyle" alt="谜面预览" /></div><div v-else class="crop-preview crop-preview--empty">尚未确认裁切</div></figure>
-          </div>
-          <div class="crop-ratios">
-            <button :class="{ active: cropAspect === 16 / 9 }" @click="cropAspect = 16 / 9">16:9</button>
-            <button :class="{ active: cropAspect === 1 }" @click="cropAspect = 1">1:1</button>
-            <button :class="{ active: !cropAspect }" @click="cropAspect = undefined">自由</button>
-          </div>
-          <Cropper v-if="currentImageUrl" ref="cropper" class="question-cropper" :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }" image-restriction="stencil" @ready="restoreCrop" />
-          <button class="button crop-confirm" :disabled="busy" @click="confirmCrop"><Scissors :size="18" />确认当前裁切</button>
         </section>
 
         <section class="admin-publish">
@@ -470,5 +515,10 @@ function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLoc
       <article v-else class="admin-empty"><Database :size="42" /><h2>题库为空</h2><p>上传原图后即可开始创建题目。</p></article>
     </section>
     <section v-else class="center-state">正在读取题库...</section>
+    <Teleport to="body">
+      <span v-if="questionPreview" class="question-hover-preview" :style="questionPreview.style">
+        <img :src="questionPreview.imageUrl" :style="{ width: `${questionPreview.crop.sourceWidth / questionPreview.crop.width * 100}%`, height: `${questionPreview.crop.sourceHeight / questionPreview.crop.height * 100}%`, left: `${-questionPreview.crop.x / questionPreview.crop.width * 100}%`, top: `${-questionPreview.crop.y / questionPreview.crop.height * 100}%` }" alt="" />
+      </span>
+    </Teleport>
   </main>
 </template>

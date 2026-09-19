@@ -42,9 +42,46 @@ describe("QuestionAdminService", () => {
     const service = createService();
     const zip = new AdmZip();
     zip.addFile("catalogue.json", Buffer.from(JSON.stringify({ version: 1, questionIds: ["broken"] })));
-    zip.addFile("broken/info.json", Buffer.from(JSON.stringify({ answers: [] })));
+    zip.addFile("broken/info.json", Buffer.from(JSON.stringify({ answers: [], enabled: true })));
     expect(() => service.importZip(zip.toBuffer())).toThrow();
     expect(JSON.parse(readFileSync(join(rootDirectory, "catalogue.json"), "utf8")).questionIds).toEqual(["existing"]);
+  });
+
+  it("creates disabled drafts and rejects enabling incomplete information", () => {
+    const service = createService();
+    const id = service.createDraft("新建题目");
+    expect(id).toBe("新建题目");
+    expect(service.list().questions.find((question) => question.id === id)?.info).toMatchObject({ title: "新建题目", enabled: false });
+    expect(() => service.updateInfo(id, { title: "新建题目", enabled: true })).toThrow("信息未补全");
+  });
+
+  it("creates one disabled draft for each batch image", () => {
+    const service = createService();
+    const ids = service.createDraftsFromImages([
+      { buffer: Buffer.from("one"), mimetype: "image/png", originalname: "one.png", relativePath: "第一批/能天使.png" },
+      { buffer: Buffer.from("two"), mimetype: "image/jpeg", originalname: "two.jpg", relativePath: "第一批/德克萨斯.jpg" },
+    ]);
+    expect(ids).toEqual(["能天使", "德克萨斯"]);
+    expect(service.list().questions.filter((question) => ids.includes(question.id)).every((question) => question.info?.enabled === false)).toBe(true);
+  });
+
+  it("exports a resource archive that can be imported into an empty bank", () => {
+    const service = createService();
+    const buffer = service.exportZip();
+    const archive = new AdmZip(buffer);
+    expect(archive.getEntry("catalogue.json")).not.toBeNull();
+    expect(archive.getEntry("existing/info.json")).not.toBeNull();
+    expect(archive.getEntry("existing/question.png")).not.toBeNull();
+    expect(archive.getEntry("existing/full.png")).not.toBeNull();
+
+    const destination = mkdtempSync(join(tmpdir(), "arkfeets-import-"));
+    try {
+      writeFileSync(join(destination, "catalogue.json"), JSON.stringify({ version: 1, questionIds: [] }));
+      const imported = new QuestionAdminService(destination, new QuestionRepository(destination)).importZip(buffer);
+      expect(imported.importedIds).toEqual(["existing"]);
+    } finally {
+      rmSync(destination, { recursive: true, force: true });
+    }
   });
 });
 

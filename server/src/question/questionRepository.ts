@@ -21,7 +21,7 @@ export const questionRecordSchema = z.object({
   answers: z.array(z.string().trim().min(1).max(100)).max(30).default([]),
   hint: z.string().trim().max(300).default(""),
   difficulty: z.array(z.enum(difficulties)).default([...difficulties]),
-  tags: z.array(z.string().trim().min(1).max(50)).max(30).default([]),
+  tags: z.array(z.string().trim().min(1).max(300)).max(30).default([]),
   originalImage: z.string().trim().max(200).default(""),
   question: cropRectSchema.nullable().default(null),
   enabled: z.boolean().default(false),

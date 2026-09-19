@@ -78,6 +78,13 @@ describe("QuestionAdminService", () => {
     expect(() => createService().updateQuestion("existing", { ...validInput([]), enabled: true })).toThrow("信息未补全");
   });
 
+  it("accepts enabled questions containing long structured metadata tags", () => {
+    const service = createService();
+    const longTag = `是否感染者:${"感染者档案说明".repeat(20)}`;
+    service.updateQuestion("existing", { ...validInput(["答案"]), tags: [longTag], enabled: true });
+    expect(JSON.parse(readFileSync(join(rootDirectory, "question_data", "existing.json"), "utf8")).tags).toEqual([longTag]);
+  });
+
   it("exports and imports the new resource layout as a union", () => {
     const archive = new AdmZip(createService().exportZip());
     expect(archive.getEntry("catalogue.json")).not.toBeNull();

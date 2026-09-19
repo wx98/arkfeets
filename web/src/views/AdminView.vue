@@ -70,6 +70,8 @@ const form = ref<QuestionRecord>(emptyQuestion());
 const tagText = ref("");
 const metadataForm = ref<ImageMetadata>(emptyMetadata());
 const metadataTagRows = ref<MetadataTagRow[]>([]);
+const workbench = ref<HTMLElement>();
+const adminEditor = ref<HTMLElement>();
 const cropper = ref<InstanceType<typeof Cropper>>();
 const cropAspect = ref<number | undefined>();
 const cropConfirmed = ref(false);
@@ -160,6 +162,7 @@ function selectImage(image: LibraryImage) {
   isCropping.value = false;
   message.value = "";
   error.value = "";
+  resetEditorScroll();
 }
 
 function toggleImage(image: LibraryImage) {
@@ -181,6 +184,7 @@ async function selectQuestion(question: LibraryQuestion) {
   isCropping.value = false;
   await nextTick();
   restoreCrop();
+  resetEditorScroll();
 }
 
 function beginQuestion(image: LibraryImage) {
@@ -201,6 +205,18 @@ function beginQuestion(image: LibraryImage) {
   cropAspect.value = undefined;
   message.value = "";
   error.value = "";
+  resetEditorScroll();
+}
+
+function resetEditorScroll() {
+  void nextTick(() => {
+    const reset = () => {
+      if (workbench.value) workbench.value.scrollTop = 0;
+      if (adminEditor.value) adminEditor.value.scrollTop = 0;
+    };
+    reset();
+    requestAnimationFrame(() => requestAnimationFrame(reset));
+  });
 }
 
 function restoreCrop() {
@@ -250,7 +266,7 @@ function applyCropResult(result: { coordinates: { left: number; top: number; wid
 
 async function saveQuestion() {
   if (!canSaveQuestion.value) { error.value = "请先填写标题并确认谜面裁切"; return; }
-  if (!captureCurrentCrop()) return;
+  if (!cropConfirmed.value) { error.value = "请先保存裁切，再保存题目"; return; }
   await perform(async () => {
     const payload = {
       title: form.value.title.trim(),
@@ -424,7 +440,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
       <p v-if="error" class="error-text">{{ error }}</p>
     </section>
 
-    <section v-else-if="library" class="admin-workbench" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+    <section v-else-if="library" ref="workbench" class="admin-workbench" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
       <aside class="admin-sidebar">
         <div class="admin-view-tabs">
           <button :class="{ active: mode === 'images' }" @click="mode = 'images'"><Images :size="16" />原图</button>
@@ -475,7 +491,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
         </nav>
       </aside>
 
-      <article v-if="selectedQuestionId || isNew" class="admin-editor">
+      <article v-if="selectedQuestionId || isNew" ref="adminEditor" class="admin-editor">
         <header>
           <div><p class="eyebrow">QUESTION RECORD / {{ isNew ? 'NEW' : selectedQuestionId }}</p><h2>{{ form.title || '未命名题目' }}</h2></div>
           <span :class="selectedQuestion?.validation.valid ? 'valid' : 'invalid'">{{ isNew ? '未提交' : selectedQuestion?.validation.valid ? '校验通过' : '待修正' }}</span>
@@ -525,7 +541,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
         <p v-if="error" class="error-text">{{ error }}</p>
       </article>
 
-      <article v-else-if="selectedImage" class="admin-editor asset-editor">
+      <article v-else-if="selectedImage" ref="adminEditor" class="admin-editor asset-editor">
         <header><div><p class="eyebrow">SOURCE IMAGE / FULL DATA</p><h2>{{ selectedImage.fileName }}</h2></div><button class="button button--primary" @click="beginQuestion(selectedImage)"><FilePlus2 :size="17" />新增题目</button></header>
         <div class="asset-overview">
           <img :src="selectedImage.url" :alt="selectedImage.fileName" />

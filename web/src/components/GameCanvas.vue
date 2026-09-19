@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import Phaser from "phaser";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import type { CropRect } from "../types";
 const props = defineProps<{
-  question: { id: string; imageUrl: string };
+  question: { id: string; imageUrl: string; crop: CropRect };
   reveal?: { imageUrl: string };
   state: "ANSWERING" | "REVEAL" | "FINISHED";
 }>();
@@ -28,16 +29,19 @@ class GuessScene extends Phaser.Scene {
     renderCurrent();
   }
 
-  showImage(url: string) {
+  showImage(url: string, crop?: CropRect) {
     const key = `asset:${url}`;
     const display = () => {
       this.currentImage?.destroy();
       this.imageMask?.destroy();
       const texture = this.textures.get(key).getSourceImage() as HTMLImageElement;
-      const image = this.add.image(480, 260, key);
       const frameWidth = 850;
       const frameHeight = 442;
-      const scale = Math.min(frameWidth / texture.width, frameHeight / texture.height);
+      const visible = crop ?? { x: 0, y: 0, width: texture.width, height: texture.height, sourceWidth: texture.width, sourceHeight: texture.height };
+      const scale = Math.min(frameWidth / visible.width, frameHeight / visible.height);
+      const offsetX = (visible.x + visible.width / 2) - texture.width / 2;
+      const offsetY = (visible.y + visible.height / 2) - texture.height / 2;
+      const image = this.add.image(480 - offsetX * scale, 260 - offsetY * scale, key);
       image.setScale(scale);
       const maskShape = this.make.graphics({ x: 0, y: 0 }).fillStyle(0xffffff).fillRect(55, 39, frameWidth, frameHeight);
       this.imageMask = maskShape.createGeometryMask();
@@ -57,10 +61,10 @@ class GuessScene extends Phaser.Scene {
 function renderCurrent() {
   if (!scene) return;
   const isReveal = props.state !== "ANSWERING" && Boolean(props.reveal);
-  scene.showImage(isReveal ? props.reveal!.imageUrl : props.question.imageUrl);
+  scene.showImage(isReveal ? props.reveal!.imageUrl : props.question.imageUrl, isReveal ? undefined : props.question.crop);
 }
 
-watch(() => [props.question.id, props.state, props.reveal?.imageUrl], renderCurrent);
+watch(() => [props.question.id, props.state, props.reveal?.imageUrl, JSON.stringify(props.question.crop)], renderCurrent);
 
 onMounted(() => {
   if (!host.value) return;

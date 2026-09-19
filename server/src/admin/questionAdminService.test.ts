@@ -10,74 +10,69 @@ let rootDirectory: string;
 
 beforeEach(() => {
   rootDirectory = mkdtempSync(join(tmpdir(), "arkfeets-admin-"));
-  writeFileSync(join(rootDirectory, "catalogue.json"), JSON.stringify({ version: 1, questionIds: ["existing"] }));
-  writeQuestion(rootDirectory, "existing", ["旧答案"]);
+  mkdirSync(join(rootDirectory, "full_data"));
+  mkdirSync(join(rootDirectory, "question_data"));
+  writeFileSync(join(rootDirectory, "full_data", "existing.png"), "image");
+  writeFileSync(join(rootDirectory, "full_data", "existing.json"), JSON.stringify({ name: "existing" }));
+  writeFileSync(join(rootDirectory, "catalogue.json"), JSON.stringify([{ id: "existing", file: "question_data/existing.json" }]));
+  writeFileSync(join(rootDirectory, "question_data", "existing.json"), JSON.stringify(record("existing", ["旧答案"])));
 });
 
 afterEach(() => rmSync(rootDirectory, { recursive: true, force: true }));
 
 describe("QuestionAdminService", () => {
-  it("rejects traversal paths and invalid question ids", () => {
+  it("rejects traversal archive paths and invalid question ids", () => {
     expect(() => validateArchivePath("../outside.txt")).toThrow("路径穿越");
     expect(() => validateArchivePath("C:/outside.txt")).toThrow("非法路径");
-    const service = createService();
-    expect(() => service.updateInfo("../existing", validInfo(["答案"]))).toThrow("非法题目 ID");
+    expect(() => createService().updateQuestion("../existing", validInput(["答案"]))).toThrow("题目不存在");
   });
 
-  it("imports new questions as a union and preserves conflicts", () => {
+  it("updates one question file without rewriting catalogue", () => {
     const service = createService();
-    const zip = new AdmZip();
-    zip.addFile("pack/catalogue.json", Buffer.from(JSON.stringify({ version: 1, questionIds: ["existing", "new-one"] })));
-    zip.addFile("pack/new-one/info.json", Buffer.from(JSON.stringify(validInfo(["新答案"]))));
-    zip.addFile("pack/new-one/question.png", Buffer.from("question"));
-    zip.addFile("pack/new-one/full.png", Buffer.from("full"));
-
-    const result = service.importZip(zip.toBuffer());
-    expect(result).toMatchObject({ importedIds: ["new-one"], conflicts: ["existing"] });
-    expect(JSON.parse(readFileSync(join(rootDirectory, "catalogue.json"), "utf8")).questionIds).toEqual(["existing", "new-one"]);
-    expect(JSON.parse(readFileSync(join(rootDirectory, "existing", "info.json"), "utf8")).answers).toEqual(["旧答案"]);
+    const before = readFileSync(join(rootDirectory, "catalogue.json"), "utf8");
+    service.updateQuestion("existing", { ...validInput(["新答案"]), title: "新标题" });
+    expect(readFileSync(join(rootDirectory, "catalogue.json"), "utf8")).toBe(before);
+    expect(JSON.parse(readFileSync(join(rootDirectory, "question_data", "existing.json"), "utf8")).answers).toEqual(["新答案"]);
   });
 
-  it("rejects malformed resources before changing the catalogue", () => {
+  it("creates a question only after title and crop are complete", () => {
     const service = createService();
-    const zip = new AdmZip();
-    zip.addFile("catalogue.json", Buffer.from(JSON.stringify({ version: 1, questionIds: ["broken"] })));
-    zip.addFile("broken/info.json", Buffer.from(JSON.stringify({ answers: [], enabled: true })));
-    expect(() => service.importZip(zip.toBuffer())).toThrow();
-    expect(JSON.parse(readFileSync(join(rootDirectory, "catalogue.json"), "utf8")).questionIds).toEqual(["existing"]);
+    expect(() => service.createQuestion({ ...validInput(["答案"]), title: "", question: null })).toThrow("填写标题");
+    const id = service.createQuestion({ ...validInput(["答案"]), title: "新问题", enabled: false });
+    expect(id).toBe("新问题");
+    expect(JSON.parse(readFileSync(join(rootDirectory, "catalogue.json"), "utf8"))).toContainEqual({ id, file: `question_data/${id}.json` });
   });
 
-  it("creates disabled drafts and rejects enabling incomplete information", () => {
-    const service = createService();
-    const id = service.createDraft("新建题目");
-    expect(id).toBe("新建题目");
-    expect(service.list().questions.find((question) => question.id === id)?.info).toMatchObject({ title: "新建题目", enabled: false });
-    expect(() => service.updateInfo(id, { title: "新建题目", enabled: true })).toThrow("信息未补全");
+  it("groups image statistics and metadata", () => {
+    const library = createService().list();
+    expect(library.images).toContainEqual(expect.objectContaining({ fileName: "existing.png", validCount: 1, totalCount: 1 }));
+    expect(library.questions[0]).toMatchObject({ id: "existing", validation: { valid: true } });
   });
 
-  it("creates one disabled draft for each batch image", () => {
+  it("adds full images without creating question drafts", () => {
     const service = createService();
-    const ids = service.createDraftsFromImages([
-      { buffer: Buffer.from("one"), mimetype: "image/png", originalname: "one.png", relativePath: "第一批/能天使.png" },
-      { buffer: Buffer.from("two"), mimetype: "image/jpeg", originalname: "two.jpg", relativePath: "第一批/德克萨斯.jpg" },
-    ]);
-    expect(ids).toEqual(["能天使", "德克萨斯"]);
-    expect(service.list().questions.filter((question) => ids.includes(question.id)).every((question) => question.info?.enabled === false)).toBe(true);
+    expect(service.addImages([{ buffer: Buffer.from("new"), mimetype: "image/png", originalname: "能天使.png" }])).toEqual({
+      added: ["能天使.png"], conflicts: [],
+    });
+    expect(service.list().images.map((image) => image.fileName)).toContain("能天使.png");
+    expect(service.list().questions).toHaveLength(1);
   });
 
-  it("exports a resource archive that can be imported into an empty bank", () => {
-    const service = createService();
-    const buffer = service.exportZip();
-    const archive = new AdmZip(buffer);
+  it("rejects enabling incomplete records", () => {
+    expect(() => createService().updateQuestion("existing", { ...validInput([]), enabled: true })).toThrow("信息未补全");
+  });
+
+  it("exports and imports the new resource layout as a union", () => {
+    const archive = new AdmZip(createService().exportZip());
     expect(archive.getEntry("catalogue.json")).not.toBeNull();
-    expect(archive.getEntry("existing/info.json")).not.toBeNull();
-    expect(archive.getEntry("existing/question.png")).not.toBeNull();
-    expect(archive.getEntry("existing/full.png")).not.toBeNull();
-
+    expect(archive.getEntry("question_data/existing.json")).not.toBeNull();
+    expect(archive.getEntry("full_data/existing.png")).not.toBeNull();
     const destination = mkdtempSync(join(tmpdir(), "arkfeets-import-"));
     try {
-      writeFileSync(join(destination, "catalogue.json"), JSON.stringify({ version: 1, questionIds: [] }));
-      const imported = new QuestionAdminService(destination, new QuestionRepository(destination)).importZip(buffer);
+      mkdirSync(join(destination, "full_data"));
+      mkdirSync(join(destination, "question_data"));
+      writeFileSync(join(destination, "catalogue.json"), "[]");
+      const imported = new QuestionAdminService(destination, new QuestionRepository(destination)).importZip(archive.toBuffer());
       expect(imported.importedIds).toEqual(["existing"]);
     } finally {
       rmSync(destination, { recursive: true, force: true });
@@ -86,18 +81,22 @@ describe("QuestionAdminService", () => {
 });
 
 function createService() {
-  const repository = new QuestionRepository(rootDirectory);
-  return new QuestionAdminService(rootDirectory, repository);
+  return new QuestionAdminService(rootDirectory, new QuestionRepository(rootDirectory));
 }
 
-function writeQuestion(root: string, id: string, answers: string[]): void {
-  const directory = join(root, id);
-  mkdirSync(directory);
-  writeFileSync(join(directory, "info.json"), JSON.stringify(validInfo(answers)));
-  writeFileSync(join(directory, "question.png"), "question");
-  writeFileSync(join(directory, "full.png"), "full");
+function validInput(answers: string[]) {
+  return {
+    title: "题目",
+    answers,
+    hint: "",
+    difficulty: ["simple", "medium", "hard", "hell"] as const,
+    tags: [],
+    originalImage: "existing.png",
+    question: { x: 10, y: 20, width: 100, height: 80, sourceWidth: 200, sourceHeight: 160 },
+    enabled: true,
+  };
 }
 
-function validInfo(answers: string[]) {
-  return { answers, questionImg: "question.png", answerRevealImg: "full.png", enabled: true };
+function record(id: string, answers: string[]) {
+  return { id, ...validInput(answers) };
 }

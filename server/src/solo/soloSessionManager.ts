@@ -138,7 +138,7 @@ export class SoloSessionManager {
   private toView(session: SoloSession) {
     const question = this.currentQuestion(session);
     const reveal = session.state === "ANSWERING" ? undefined : {
-      imageUrl: question.answerRevealImgUrl,
+      imageUrl: question.originalImageUrl,
       answers: question.answers,
     };
     return {
@@ -149,7 +149,8 @@ export class SoloSessionManager {
         id: question.id,
         title: question.title,
         hint: question.hint,
-        imageUrl: question.questionImgUrl,
+        imageUrl: question.originalImageUrl,
+        crop: question.question,
         index: session.currentIndex + 1,
         total: session.questions.length,
         durationSeconds: durationByDifficulty[session.difficulty],

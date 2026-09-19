@@ -26,6 +26,7 @@ export interface MultiplayerRoomView {
     title?: string;
     hint?: string;
     imageUrl: string;
+    crop: import("../question/types.js").CropRect;
     index: number;
     total: number;
     durationSeconds: number;
@@ -351,7 +352,7 @@ export class MultiplayerRoomManager {
     const question = room.questions[room.currentIndex];
     const showQuestion = room.state === "ANSWERING" || room.state === "REVEAL";
     const reveal = room.state === "REVEAL" && question ? {
-      imageUrl: question.answerRevealImgUrl,
+      imageUrl: question.originalImageUrl,
       answers: question.answers,
       winnerNickname: room.roundWinnerSessionId ? room.players.get(room.roundWinnerSessionId)?.nickname : undefined,
     } : undefined;
@@ -377,7 +378,8 @@ export class MultiplayerRoomManager {
         id: question.id,
         title: question.title,
         hint: question.hint,
-        imageUrl: question.questionImgUrl,
+        imageUrl: question.originalImageUrl,
+        crop: question.question,
         index: room.currentIndex + 1,
         total: room.overtime ? room.questions.length : room.regularQuestionCount,
         durationSeconds: this.durations[room.difficulty],

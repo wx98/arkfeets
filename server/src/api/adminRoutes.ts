@@ -5,7 +5,6 @@ import type { AdminSessionManager } from "../admin/adminSessionManager.js";
 import type { QuestionAdminService } from "../admin/questionAdminService.js";
 
 const loginSchema = z.object({ password: z.string().min(1).max(200) }).strict();
-const createDraftSchema = z.object({ title: z.string().max(100).default("") }).strict();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
 const zipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024, files: 1 } });
 const batchUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 200 } });
@@ -32,8 +31,9 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
     response.clearCookie("arkfeets_admin", { path: "/api/admin" });
     response.json({ ok: true });
   });
+  router.get("/library", (_request, response) => run(response, () => questions.list()));
   router.get("/questions", (_request, response) => run(response, () => questions.list()));
-  router.post("/questions", (request, response) => run(response, () => ({ id: questions.createDraft(createDraftSchema.parse(request.body).title) })));
+  router.post("/questions", (request, response) => run(response, () => ({ id: questions.createQuestion(request.body) })));
   router.get("/questions/export", (_request, response) => {
     try {
       const archive = questions.exportZip();
@@ -44,12 +44,12 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
       response.status(400).json({ message: error instanceof Error ? error.message : "导出失败" });
     }
   });
-  router.put("/questions/:id/info", (request, response) => run(response, () => questions.updateInfo(String(request.params.id), request.body)));
-  router.post("/questions/:id/images/:kind", upload.single("image"), (request, response) => run(response, () => {
-    if (request.params.kind !== "question" && request.params.kind !== "reveal") throw new Error("图片类型无效");
+  router.put("/questions/:id", (request, response) => run(response, () => questions.updateQuestion(String(request.params.id), request.body)));
+  router.post("/images", upload.single("image"), (request, response) => run(response, () => {
     if (!request.file) throw new Error("请选择图片文件");
-    return questions.replaceImage(String(request.params.id), request.params.kind, request.file);
+    return questions.addImages([request.file]);
   }));
+  router.put("/images/:fileName/metadata", (request, response) => run(response, () => questions.updateImageMetadata(String(request.params.fileName), request.body)));
   router.post("/questions/import-zip", zipUpload.single("archive"), (request, response) => run(response, () => {
     if (!request.file || !request.file.originalname.toLowerCase().endsWith(".zip")) throw new Error("请选择 ZIP 资源包");
     return questions.importZip(request.file.buffer);
@@ -58,8 +58,8 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
     const files = request.files as Express.Multer.File[] | undefined;
     const paths = z.array(z.string().max(500)).parse(JSON.parse(String(request.body.paths ?? "[]")));
     if (!files || files.length !== paths.length) throw new Error("批量图片与路径信息不匹配");
-    const drafts = files.map((file, index) => ({ ...file, relativePath: paths[index] }));
-    return { ids: questions.createDraftsFromImages(drafts) };
+    const namedFiles = files.map((file, index) => ({ ...file, originalname: paths[index].split(/[\\/]/u).at(-1) || file.originalname }));
+    return questions.addImages(namedFiles);
   }));
   return router;
 }

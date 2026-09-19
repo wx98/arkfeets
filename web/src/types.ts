@@ -1,5 +1,6 @@
 export type Difficulty = "simple" | "medium" | "hard" | "hell";
 export type SoloState = "ANSWERING" | "REVEAL" | "FINISHED";
+export interface CropRect { x: number; y: number; width: number; height: number; sourceWidth: number; sourceHeight: number }
 
 export interface SoloGameView {
   sessionId: string;
@@ -10,6 +11,7 @@ export interface SoloGameView {
     title?: string;
     hint?: string;
     imageUrl: string;
+    crop: CropRect;
     index: number;
     total: number;
     durationSeconds: number;
@@ -46,6 +48,7 @@ export interface MultiplayerRoomView {
     title?: string;
     hint?: string;
     imageUrl: string;
+    crop: CropRect;
     index: number;
     total: number;
     durationSeconds: number;

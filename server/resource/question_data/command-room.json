@@ -1,0 +1,29 @@
+{
+  "id": "command-room",
+  "title": "任务地点",
+  "answers": [
+    "作战室",
+    "指挥室"
+  ],
+  "hint": "任务开始前会聚集在这里",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "示例",
+    "场景"
+  ],
+  "originalImage": "command-room.png",
+  "question": {
+    "x": 360,
+    "y": 300,
+    "width": 950,
+    "height": 535,
+    "sourceWidth": 1672,
+    "sourceHeight": 941
+  },
+  "enabled": true
+}

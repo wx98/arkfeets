@@ -2,6 +2,15 @@ export const difficulties = ["simple", "medium", "hard", "hell"] as const;
 
 export type Difficulty = (typeof difficulties)[number];
 
+export interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  sourceWidth: number;
+  sourceHeight: number;
+}
+
 export interface Question {
   id: string;
   title?: string;
@@ -9,8 +18,8 @@ export interface Question {
   hint?: string;
   difficulty: Difficulty[];
   tags: string[];
-  questionImgUrl: string;
-  answerRevealImgUrl: string;
+  originalImageUrl: string;
+  question: CropRect;
   enabled: boolean;
 }
 

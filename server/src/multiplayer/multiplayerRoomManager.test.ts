@@ -130,8 +130,8 @@ function createManager(count: number, options: ConstructorParameters<typeof Mult
     answers: [`答案${index + 1}`],
     difficulty: ["medium"],
     tags: [],
-    questionImgUrl: `/question-${index + 1}.png`,
-    answerRevealImgUrl: `/answer-${index + 1}.png`,
+    originalImageUrl: `/full-data/image-${index + 1}.png`,
+    question: { x: 0, y: 0, width: 100, height: 100, sourceWidth: 100, sourceHeight: 100 },
     enabled: true,
   }));
   return new MultiplayerRoomManager({ drawQuestions: (_difficulty, requested) => questions.slice(0, requested) }, options);

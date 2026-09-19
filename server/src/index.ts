@@ -24,17 +24,17 @@ app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const questionDirectory = join(currentDir, "../resource/question");
+const resourceDirectory = join(currentDir, "../resource");
 const config = JSON.parse(readFileSync(join(currentDir, "../config.json"), "utf8")) as {
   adminPassword: string;
   adminSessionHours?: number;
 };
-const questionRepository = new QuestionRepository(questionDirectory);
+const questionRepository = new QuestionRepository(resourceDirectory);
 const soloSessionManager = new SoloSessionManager(questionRepository);
 const adminSessions = new AdminSessionManager(config.adminPassword, (config.adminSessionHours ?? 8) * 60 * 60 * 1000);
-const questionAdminService = new QuestionAdminService(questionDirectory, questionRepository);
+const questionAdminService = new QuestionAdminService(resourceDirectory, questionRepository);
 
-app.use("/questions", express.static(questionDirectory));
+app.use("/full-data", express.static(join(resourceDirectory, "full_data")));
 app.use("/api/solo", createSoloRoutes(soloSessionManager));
 app.use("/api/admin", createAdminRoutes(adminSessions, questionAdminService));
 

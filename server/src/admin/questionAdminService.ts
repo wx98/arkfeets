@@ -2,129 +2,158 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { basename, extname, join, posix, resolve, sep } from "node:path";
 import AdmZip from "adm-zip";
 import { z } from "zod";
-import { catalogueSchema, questionInfoSchema, type QuestionRepository } from "../question/questionRepository.js";
+import {
+  catalogueSchema,
+  imageUrl,
+  questionRecordSchema,
+  validateCompleteRecord,
+  type CatalogueEntry,
+  type QuestionRecord,
+  type QuestionRepository,
+} from "../question/questionRepository.js";
 import { difficulties } from "../question/types.js";
 
-export const adminQuestionInfoSchema = z.object({
-  title: z.string().trim().max(100).default(""),
-  answers: z.array(z.string().trim().min(1).max(100)).max(30).default([]),
-  hint: z.string().trim().max(300).default(""),
-  difficulty: z.array(z.enum(difficulties)).default([...difficulties]),
-  tags: z.array(z.string().trim().min(1).max(50)).max(30).default([]),
-  questionImg: z.string().trim().max(200).default(""),
-  answerRevealImg: z.string().trim().max(200).default(""),
-  enabled: z.boolean().default(false),
-}).strict();
-
-export type AdminQuestionInfo = z.infer<typeof adminQuestionInfoSchema>;
 type UploadedImage = { buffer: Buffer; mimetype: string; originalname: string };
-
 const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const imageMimeExtensions = new Map([
   ["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/webp", ".webp"], ["image/gif", ".gif"],
 ]);
-const safeIdPattern = /^[\p{L}\p{N}][\p{L}\p{N}._-]{0,79}$/u;
+
+export const imageMetadataSchema = z.object({
+  name: z.string().trim().max(100).default(""),
+  answers: z.array(z.string().trim().min(1).max(100)).max(30).default([]),
+  hint: z.string().trim().max(300).default(""),
+  difficulty: z.array(z.enum(difficulties)).default([...difficulties]),
+  tags: z.array(z.string().trim().min(1).max(50)).max(30).default([]),
+}).strict();
+
+const questionInputSchema = questionRecordSchema.omit({ id: true });
+export type AdminQuestionRecord = QuestionRecord;
 
 export class QuestionAdminService {
-  constructor(private readonly rootDirectory: string, private readonly repository: QuestionRepository) {}
+  private readonly fullDataDirectory: string;
+  private readonly questionDataDirectory: string;
+
+  constructor(private readonly resourceDirectory: string, private readonly repository: QuestionRepository) {
+    this.fullDataDirectory = join(resourceDirectory, "full_data");
+    this.questionDataDirectory = join(resourceDirectory, "question_data");
+    mkdirSync(this.fullDataDirectory, { recursive: true });
+    mkdirSync(this.questionDataDirectory, { recursive: true });
+  }
 
   list() {
     const catalogue = this.readCatalogue();
     const validationById = new Map(this.repository.getValidationReport().items.map((item) => [item.id, item]));
-    return {
-      ...this.repository.getValidationReport(),
-      questions: catalogue.questionIds.map((id) => {
-        let info: AdminQuestionInfo | null = null;
-        try {
-          info = adminQuestionInfoSchema.parse(JSON.parse(readFileSync(this.infoPath(id), "utf8")));
-        } catch {
-          // The repository report carries validation details for malformed files.
-        }
-        const questionImageName = info?.questionImg || "";
-        const revealImageName = info?.answerRevealImg || "";
+    const questions = catalogue.map((entry) => {
+      let info: QuestionRecord | null = null;
+      try {
+        info = questionRecordSchema.parse(JSON.parse(readFileSync(this.questionPath(entry.id), "utf8")));
+      } catch {
+        // Validation details are returned by the repository report.
+      }
+      const originalImage = info?.originalImage;
+      return {
+        id: entry.id,
+        info,
+        originalImageUrl: originalImage ? this.versionedImageUrl(originalImage) : null,
+        validation: validationById.get(entry.id) ?? { id: entry.id, valid: false, errors: ["未校验"] },
+      };
+    });
+    const questionsByImage = new Map<string, typeof questions>();
+    for (const question of questions) {
+      const name = question.info?.originalImage;
+      if (!name) continue;
+      const group = questionsByImage.get(name) ?? [];
+      group.push(question);
+      questionsByImage.set(name, group);
+    }
+    const images = readdirSync(this.fullDataDirectory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && imageExtensions.has(extname(entry.name).toLowerCase()))
+      .map((entry) => {
+        const related = questionsByImage.get(entry.name) ?? [];
         return {
-          id,
-          info,
-          questionImgUrl: questionImageName && existsSync(this.safeQuestionPath(id, questionImageName)) ? this.imageUrl(id, questionImageName) : null,
-          answerRevealImgUrl: revealImageName && existsSync(this.safeQuestionPath(id, revealImageName)) ? this.imageUrl(id, revealImageName) : null,
-          validation: validationById.get(id) ?? { id, valid: false, errors: ["未校验"] },
+          fileName: entry.name,
+          url: this.versionedImageUrl(entry.name),
+          metadata: this.readImageMetadata(entry.name),
+          questionIds: related.map((question) => question.id),
+          validCount: related.filter((question) => question.validation.valid).length,
+          invalidCount: related.filter((question) => !question.validation.valid).length,
+          totalCount: related.length,
         };
-      }),
-    };
+      })
+      .sort((left, right) => left.fileName.localeCompare(right.fileName));
+    return { ...this.repository.getValidationReport(), images, questions };
   }
 
-  createDraft(title: string): string {
-    const id = this.createUniqueId(title || "new-question");
-    this.persistDraft(id, this.emptyDraft(title));
+  createQuestion(input: unknown): string {
+    const parsed = questionInputSchema.parse(input);
+    if (!parsed.title || !parsed.question) throw new Error("请先填写标题并完成谜面裁切");
+    this.assertImageExists(parsed.originalImage);
+    const id = this.createUniqueId(parsed.title);
+    const record = questionRecordSchema.parse({ ...parsed, id });
+    if (record.enabled) this.assertCanEnable(record);
+    this.writeJsonAtomic(this.questionPath(id), record);
+    try {
+      this.writeCatalogue([...this.readCatalogue(), { id, file: `question_data/${id}.json` }]);
+    } catch (error) {
+      rmSync(this.questionPath(id), { force: true });
+      throw error;
+    }
+    this.repository.reload();
     return id;
   }
 
-  createDraftsFromImages(files: Array<UploadedImage & { relativePath?: string }>): string[] {
-    if (files.length === 0) throw new Error("请选择至少一张完整图片");
-    const prepared = files.map((file) => {
+  updateQuestion(id: string, input: unknown): QuestionRecord {
+    this.assertRegisteredId(id);
+    const record = questionRecordSchema.parse({ ...questionInputSchema.parse(input), id });
+    this.assertImageExists(record.originalImage);
+    if (record.enabled) this.assertCanEnable(record);
+    this.writeJsonAtomic(this.questionPath(id), record);
+    this.repository.reload();
+    return record;
+  }
+
+  addImages(files: UploadedImage[]): { added: string[]; conflicts: string[] } {
+    const added: string[] = [];
+    const conflicts: string[] = [];
+    for (const file of files) {
       const extension = this.imageExtension(file);
-      const relativePath = (file.relativePath || file.originalname).replaceAll("\\", "/");
-      const pathParts = relativePath.split("/").filter(Boolean);
-      const originalName = pathParts.at(-1) ?? file.originalname;
-      const title = basename(originalName, extname(originalName)) || "未命名题目";
-      return { file, extension, title, folder: pathParts.length > 1 ? pathParts[0] : "批量上传" };
-    });
-
-    const ids: string[] = [];
-    for (const item of prepared) {
-      const id = this.createUniqueId(item.title);
-      const directory = this.safeQuestionPath(id);
-      mkdirSync(directory);
-      const fullName = `full${item.extension}`;
-      writeFileSync(join(directory, fullName), item.file.buffer);
-      this.writeJsonAtomic(join(directory, "info.json"), {
-        ...this.emptyDraft(item.title), tags: [item.folder], answerRevealImg: fullName,
+      const stem = basename(file.originalname, extname(file.originalname)).replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-|-$/g, "") || "image";
+      const fileName = `${stem}${extension}`;
+      if (existsSync(this.imagePath(fileName))) {
+        conflicts.push(fileName);
+        continue;
+      }
+      writeFileSync(this.imagePath(fileName), file.buffer);
+      this.writeJsonAtomic(this.metadataPath(fileName), {
+        name: stem,
+        answers: [],
+        hint: "",
+        difficulty: [...difficulties],
+        tags: [],
       });
-      ids.push(id);
-      this.appendCatalogueIds([id]);
+      added.push(fileName);
     }
-    this.repository.reload();
-    return ids;
+    return { added, conflicts };
   }
 
-  updateInfo(id: string, input: unknown): AdminQuestionInfo {
-    this.assertRegisteredId(id);
-    const info = adminQuestionInfoSchema.parse(input);
-    if (info.questionImg) this.assertImageName(info.questionImg);
-    if (info.answerRevealImg) this.assertImageName(info.answerRevealImg);
-    if (info.enabled) this.assertCanEnable(id, info);
-    this.writeJsonAtomic(this.infoPath(id), info);
-    this.repository.reload();
-    return info;
-  }
-
-  replaceImage(id: string, kind: "question" | "reveal", file: UploadedImage): AdminQuestionInfo {
-    this.assertRegisteredId(id);
-    const extension = this.imageExtension(file);
-    const info = adminQuestionInfoSchema.parse(JSON.parse(readFileSync(this.infoPath(id), "utf8")));
-    const property = kind === "question" ? "questionImg" : "answerRevealImg";
-    const previousName = info[property];
-    const fileName = kind === "question" ? `question${extension}` : `full${extension}`;
-    writeFileSync(this.safeQuestionPath(id, fileName), file.buffer);
-    info[property] = fileName;
-    this.writeJsonAtomic(this.infoPath(id), info);
-    if (previousName && previousName !== fileName && previousName !== info.questionImg && previousName !== info.answerRevealImg) {
-      rmSync(this.safeQuestionPath(id, previousName), { force: true });
-    }
-    this.repository.reload();
-    return info;
+  updateImageMetadata(fileName: string, input: unknown) {
+    this.assertImageExists(fileName);
+    const metadata = imageMetadataSchema.parse(input);
+    this.writeJsonAtomic(this.metadataPath(fileName), metadata);
+    return metadata;
   }
 
   exportZip(): Buffer {
     const zip = new AdmZip();
-    const catalogue = this.readCatalogue();
-    zip.addFile("catalogue.json", Buffer.from(`${JSON.stringify(catalogue, null, 2)}\n`));
-    for (const id of catalogue.questionIds) {
-      const directory = this.safeQuestionPath(id);
-      if (!existsSync(directory)) continue;
-      for (const entry of readdirSync(directory, { withFileTypes: true })) {
-        if (!entry.isFile() || (entry.name !== "info.json" && !imageExtensions.has(extname(entry.name).toLowerCase()))) continue;
-        zip.addFile(`${id}/${entry.name}`, readFileSync(join(directory, entry.name)));
+    zip.addFile("catalogue.json", Buffer.from(`${JSON.stringify(this.readCatalogue(), null, 2)}\n`));
+    for (const entry of this.readCatalogue()) {
+      const path = this.questionPath(entry.id);
+      if (existsSync(path)) zip.addFile(entry.file, readFileSync(path));
+    }
+    for (const entry of readdirSync(this.fullDataDirectory, { withFileTypes: true })) {
+      if (entry.isFile() && (imageExtensions.has(extname(entry.name).toLowerCase()) || extname(entry.name).toLowerCase() === ".json")) {
+        zip.addFile(`full_data/${entry.name}`, readFileSync(join(this.fullDataDirectory, entry.name)));
       }
     }
     return zip.toBuffer();
@@ -142,62 +171,61 @@ export class QuestionAdminService {
     const cataloguePath = cataloguePaths[0];
     const prefix = cataloguePath.slice(0, -"catalogue.json".length);
     const importedCatalogue = catalogueSchema.parse(JSON.parse(files.get(cataloguePath)!.toString("utf8")));
-    const currentCatalogue = this.readCatalogue();
-    const currentIds = new Set(currentCatalogue.questionIds);
+    const current = this.readCatalogue();
+    const currentIds = new Set(current.map((entry) => entry.id));
     const conflicts: string[] = [];
-    const imported: Array<{ id: string; info: AdminQuestionInfo; images: Array<{ name: string; data: Buffer }> }> = [];
-    const seen = new Set<string>();
-
-    for (const id of importedCatalogue.questionIds) {
-      assertSafeId(id);
-      if (seen.has(id)) throw new Error(`资源包目录存在重复题目 ID：${id}`);
-      seen.add(id);
-      if (currentIds.has(id)) { conflicts.push(id); continue; }
-      const infoBuffer = files.get(`${prefix}${id}/info.json`);
-      if (!infoBuffer) throw new Error(`题目 ${id} 缺少 info.json`);
-      const info = adminQuestionInfoSchema.parse(JSON.parse(infoBuffer.toString("utf8")));
-      const images = [info.questionImg, info.answerRevealImg].filter(Boolean).map((name) => {
-        this.assertImageName(name);
-        const data = files.get(`${prefix}${id}/${name}`);
-        if (!data) throw new Error(`题目 ${id} 缺少图片 ${name}`);
-        return { name, data };
-      });
-      if (info.enabled) this.assertDraftComplete(info, id);
-      imported.push({ id, info, images });
+    const imported: Array<{ entry: CatalogueEntry; record: QuestionRecord }> = [];
+    for (const entry of importedCatalogue) {
+      if (currentIds.has(entry.id)) {
+        conflicts.push(entry.id);
+        continue;
+      }
+      const recordBuffer = files.get(`${prefix}${entry.file}`);
+      if (!recordBuffer) throw new Error(`题目 ${entry.id} 缺少记录文件`);
+      const record = questionRecordSchema.parse(JSON.parse(recordBuffer.toString("utf8")));
+      if (record.id !== entry.id) throw new Error(`题目 ${entry.id} 的记录 ID 不一致`);
+      const imageData = files.get(`${prefix}full_data/${record.originalImage}`);
+      if (!imageData && !existsSync(this.imagePath(record.originalImage))) throw new Error(`题目 ${entry.id} 缺少原图 ${record.originalImage}`);
+      imported.push({ entry: { id: entry.id, file: `question_data/${entry.id}.json` }, record });
     }
-
-    for (const question of imported) {
-      const directory = this.safeQuestionPath(question.id);
-      mkdirSync(directory);
-      this.writeJsonAtomic(join(directory, "info.json"), question.info);
-      for (const image of question.images) writeFileSync(join(directory, image.name), image.data);
+    for (const [path, data] of files) {
+      if (!path.startsWith(`${prefix}full_data/`)) continue;
+      const name = path.slice(`${prefix}full_data/`.length);
+      if (!name || name !== basename(name) || (!imageExtensions.has(extname(name).toLowerCase()) && extname(name).toLowerCase() !== ".json")) continue;
+      if (!existsSync(join(this.fullDataDirectory, name))) writeFileSync(join(this.fullDataDirectory, name), data);
     }
-    this.writeJsonAtomic(join(this.rootDirectory, "catalogue.json"), {
-      version: currentCatalogue.version, questionIds: [...currentCatalogue.questionIds, ...imported.map((question) => question.id)],
-    });
+    for (const item of imported) this.writeJsonAtomic(this.questionPath(item.entry.id), item.record);
+    this.writeCatalogue([...current, ...imported.map((item) => item.entry)]);
     this.repository.reload();
-    return { importedIds: imported.map((question) => question.id), conflicts, report: this.repository.getValidationReport() };
+    return { importedIds: imported.map((item) => item.entry.id), conflicts, report: this.repository.getValidationReport() };
   }
 
-  private emptyDraft(title: string): AdminQuestionInfo {
-    return { title: title.trim(), answers: [], hint: "", difficulty: [...difficulties], tags: [], questionImg: "", answerRevealImg: "", enabled: false };
+  private assertCanEnable(record: QuestionRecord): void {
+    const errors = validateCompleteRecord(record, this.fullDataDirectory);
+    if (errors.length) throw new Error(`题目 ${record.id} 信息未补全：${errors.join("、")}`);
   }
 
-  private persistDraft(id: string, info: AdminQuestionInfo): void {
-    mkdirSync(this.safeQuestionPath(id));
-    this.writeJsonAtomic(this.infoPath(id), info);
-    this.appendCatalogueIds([id]);
-    this.repository.reload();
+  private readCatalogue(): CatalogueEntry[] {
+    return catalogueSchema.parse(JSON.parse(readFileSync(join(this.resourceDirectory, "catalogue.json"), "utf8")));
   }
 
-  private appendCatalogueIds(ids: string[]): void {
-    const catalogue = this.readCatalogue();
-    this.writeJsonAtomic(join(this.rootDirectory, "catalogue.json"), { ...catalogue, questionIds: [...catalogue.questionIds, ...ids] });
+  private writeCatalogue(value: CatalogueEntry[]): void {
+    this.writeJsonAtomic(join(this.resourceDirectory, "catalogue.json"), catalogueSchema.parse(value));
+  }
+
+  private readImageMetadata(fileName: string) {
+    const path = this.metadataPath(fileName);
+    if (!existsSync(path)) return imageMetadataSchema.parse({});
+    try {
+      return imageMetadataSchema.parse(JSON.parse(readFileSync(path, "utf8")));
+    } catch {
+      return imageMetadataSchema.parse({});
+    }
   }
 
   private createUniqueId(title: string): string {
     const base = title.normalize("NFKC").trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60) || "question";
-    const existing = new Set(this.readCatalogue().questionIds);
+    const existing = new Set(this.readCatalogue().map((entry) => entry.id));
     if (!existing.has(base)) return base;
     for (let index = 2; index < 10_000; index += 1) {
       const candidate = `${base}-${index}`;
@@ -206,19 +234,13 @@ export class QuestionAdminService {
     throw new Error("无法生成唯一题目 ID");
   }
 
-  private assertCanEnable(id: string, info: AdminQuestionInfo): void {
-    this.assertDraftComplete(info, id);
-    for (const imageName of [info.questionImg, info.answerRevealImg]) {
-      if (!existsSync(this.safeQuestionPath(id, imageName))) throw new Error(`信息未补全：缺少图片 ${imageName}`);
-    }
+  private assertRegisteredId(id: string): void {
+    if (!this.readCatalogue().some((entry) => entry.id === id)) throw new Error("题目不存在或未注册");
   }
 
-  private assertDraftComplete(info: AdminQuestionInfo, id: string): void {
-    try {
-      questionInfoSchema.parse({ ...info, title: info.title || undefined, hint: info.hint || undefined });
-    } catch {
-      throw new Error(`题目 ${id} 信息未补全，不能启用`);
-    }
+  private assertImageExists(fileName: string): void {
+    if (!fileName || fileName !== basename(fileName) || !imageExtensions.has(extname(fileName).toLowerCase())) throw new Error("原图文件名不合法");
+    if (!existsSync(this.imagePath(fileName))) throw new Error(`原图不存在：${fileName}`);
   }
 
   private imageExtension(file: UploadedImage): string {
@@ -227,30 +249,16 @@ export class QuestionAdminService {
     return extension;
   }
 
-  private readCatalogue(): z.infer<typeof catalogueSchema> {
-    return catalogueSchema.parse(JSON.parse(readFileSync(join(this.rootDirectory, "catalogue.json"), "utf8")));
-  }
-
-  private assertRegisteredId(id: string): void {
-    assertSafeId(id);
-    if (!this.readCatalogue().questionIds.includes(id)) throw new Error("题目不存在或未注册");
-  }
-
-  private assertImageName(name: string): void {
-    if (name !== basename(name) || !imageExtensions.has(extname(name).toLowerCase())) throw new Error(`非法图片文件名：${name}`);
-  }
-
-  private infoPath(id: string): string { return this.safeQuestionPath(id, "info.json"); }
-
-  private safeQuestionPath(id: string, fileName?: string): string {
-    assertSafeId(id);
-    const target = resolve(this.rootDirectory, id, ...(fileName ? [fileName] : []));
-    const root = resolve(this.rootDirectory) + sep;
-    if (!target.startsWith(root)) throw new Error("目标路径超出题库目录");
+  private questionPath(id: string): string {
+    if (!/^[\p{L}\p{N}][\p{L}\p{N}._-]{0,79}$/u.test(id)) throw new Error(`非法题目 ID：${id}`);
+    const target = resolve(this.questionDataDirectory, `${id}.json`);
+    if (!target.startsWith(resolve(this.questionDataDirectory) + sep)) throw new Error("题目路径超出 question_data 目录");
     return target;
   }
 
-  private imageUrl(id: string, name: string): string { return `/questions/${encodeURIComponent(id)}/${encodeURIComponent(name)}?v=${Date.now()}`; }
+  private imagePath(name: string): string { return join(this.fullDataDirectory, basename(name)); }
+  private metadataPath(imageName: string): string { return join(this.fullDataDirectory, `${basename(imageName, extname(imageName))}.json`); }
+  private versionedImageUrl(name: string): string { return `${imageUrl(name)}?v=${Date.now()}`; }
 
   private writeJsonAtomic(path: string, value: unknown): void {
     const temporaryPath = `${path}.${process.pid}.tmp`;
@@ -267,8 +275,4 @@ export function validateArchivePath(input: string): string {
   const safePath = posix.normalize(parts.join("/"));
   if (safePath.startsWith("../") || safePath === "..") throw new Error(`ZIP 包含路径穿越：${input}`);
   return safePath;
-}
-
-function assertSafeId(id: string): void {
-  if (!safeIdPattern.test(id)) throw new Error(`非法题目 ID：${id}`);
 }

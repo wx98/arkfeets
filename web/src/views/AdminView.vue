@@ -76,6 +76,8 @@ const cropper = ref<InstanceType<typeof Cropper>>();
 const cropAspect = ref<number | undefined>();
 const cropConfirmed = ref(false);
 const isCropping = ref(false);
+const hoveredImage = ref<LibraryImage>();
+const imagePreviewPosition = ref({ x: 0, y: 0 });
 const hoveredQuestion = ref<LibraryQuestion>();
 const questionPreviewPosition = ref({ x: 0, y: 0 });
 const busy = ref(false);
@@ -106,6 +108,10 @@ const filteredQuestions = computed(() => (library.value?.questions ?? []).filter
     ...(question.info?.answers ?? []), ...(question.info?.tags ?? []),
   ].filter(Boolean).join(" ")).includes(normalizedNeedle.value);
 }));
+const imagePreview = computed(() => hoveredImage.value ? {
+  image: hoveredImage.value,
+  style: floatingPreviewStyle(imagePreviewPosition.value, 280, 220),
+} : undefined);
 const questionPreview = computed(() => {
   const question = hoveredQuestion.value;
   const crop = question?.info?.question;
@@ -126,7 +132,16 @@ const previewStyle = computed(() => {
     top: `${-(crop.y / crop.height) * 100}%`,
   };
 });
-const previewRatio = computed(() => form.value.question ? `${form.value.question.width} / ${form.value.question.height}` : "16 / 9");
+const previewViewportStyle = computed(() => {
+  const crop = form.value.question;
+  if (!crop) return {};
+  const ratio = crop.width / crop.height;
+  return {
+    aspectRatio: `${crop.width} / ${crop.height}`,
+    width: ratio >= 16 / 9 ? "100%" : "auto",
+    height: ratio >= 16 / 9 ? "auto" : "100%",
+  };
+});
 
 onMounted(() => {
   if (token.value) void loadLibrary().catch(handleError);
@@ -393,13 +408,35 @@ function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; 
 function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLocaleLowerCase(); }
 function imageLabel(fileName: string) { return fileName.replace(/\.(png|jpe?g|webp|gif)$/iu, ""); }
 
+function showImagePreview(image: LibraryImage, event: MouseEvent) {
+  hoveredImage.value = image;
+  moveImagePreview(event);
+}
+
+function moveImagePreview(event: MouseEvent) {
+  imagePreviewPosition.value = { x: event.clientX, y: event.clientY };
+}
+
 function showQuestionPreview(question: LibraryQuestion, event: MouseEvent) {
   hoveredQuestion.value = question;
   moveQuestionPreview(event);
 }
 
 function moveQuestionPreview(event: MouseEvent) {
-  questionPreviewPosition.value = { x: event.clientX + 18, y: event.clientY + 18 };
+  questionPreviewPosition.value = { x: event.clientX, y: event.clientY };
+}
+
+function floatingPreviewStyle(position: { x: number; y: number }, width: number, height: number) {
+  const gutter = 12;
+  const offset = 18;
+  const right = position.x + offset;
+  const left = right + width <= window.innerWidth - gutter ? right : position.x - width - offset;
+  return {
+    width: `${width}px`,
+    height: `${height}px`,
+    left: `${Math.max(gutter, Math.min(left, window.innerWidth - width - gutter))}px`,
+    top: `${Math.max(gutter, Math.min(position.y - height / 2, window.innerHeight - height - gutter))}px`,
+  };
 }
 
 function questionPreviewStyle(question: LibraryQuestion) {
@@ -408,12 +445,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
   const aspect = crop.width / crop.height;
   const width = aspect >= 280 / 220 ? 280 : 220 * aspect;
   const height = width / aspect;
-  return {
-    width: `${width}px`,
-    height: `${height}px`,
-    left: `${Math.min(questionPreviewPosition.value.x, window.innerWidth - width - 12)}px`,
-    top: `${Math.min(questionPreviewPosition.value.y, window.innerHeight - height - 12)}px`,
-  };
+  return floatingPreviewStyle(questionPreviewPosition.value, width, height);
 }
 </script>
 
@@ -461,10 +493,9 @@ function questionPreviewStyle(question: LibraryQuestion) {
         <nav v-if="mode === 'images'" class="asset-list" aria-label="原图列表">
           <div v-for="image in filteredImages" :key="image.fileName" class="asset-group" :class="{ active: selectedImageName === image.fileName }">
             <div class="asset-row">
-              <button class="asset-row__main" @click="toggleImage(image)">
+              <button class="asset-row__main" @click="toggleImage(image)" @mouseenter="showImagePreview(image, $event)" @mousemove="moveImagePreview" @mouseleave="hoveredImage = undefined">
                 <ImageIcon :size="16" />
                 <span>{{ imageLabel(image.fileName) }}</span>
-                <span class="asset-hover-preview"><img :src="image.url" :alt="image.fileName" /></span>
               </button>
               <button class="asset-row__add" title="基于此原图新增题目" @click="beginQuestion(image)"><Plus :size="14" /></button>
               <small>{{ image.validCount }}/{{ image.totalCount }}</small>
@@ -502,7 +533,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
           <div class="admin-section-title"><span>01</span><div><strong>谜底与谜面</strong><small>ORIGINAL / CROP</small></div></div>
           <div class="image-dual-preview">
             <figure><figcaption>谜底 · 完整原图</figcaption><img :src="currentImageUrl" alt="完整原图" /></figure>
-            <figure><figcaption>谜面 · 实时裁切</figcaption><div v-if="form.question" class="crop-preview" :style="{ aspectRatio: previewRatio }"><img :src="currentImageUrl" :style="previewStyle" alt="谜面预览" /></div><div v-else class="crop-preview crop-preview--empty">尚未确认裁切</div></figure>
+            <figure><figcaption>谜面 · 实时裁切</figcaption><div class="crop-preview-frame"><div v-if="form.question" class="crop-preview" :style="previewViewportStyle"><img :src="currentImageUrl" :style="previewStyle" alt="谜面预览" /></div><div v-else class="crop-preview--empty">尚未确认裁切</div></div></figure>
           </div>
           <div class="crop-ratios">
             <button :class="{ active: cropAspect === 16 / 9 }" :disabled="!isCropping" @click="cropAspect = 16 / 9">16:9</button>
@@ -577,6 +608,9 @@ function questionPreviewStyle(question: LibraryQuestion) {
     </section>
     <section v-else class="center-state">正在读取题库...</section>
     <Teleport to="body">
+      <span v-if="imagePreview" class="asset-hover-preview" :style="imagePreview.style">
+        <img :src="imagePreview.image.url" :alt="imagePreview.image.fileName" />
+      </span>
       <span v-if="questionPreview" class="question-hover-preview" :style="questionPreview.style">
         <img :src="questionPreview.imageUrl" :style="{ width: `${questionPreview.crop.sourceWidth / questionPreview.crop.width * 100}%`, height: `${questionPreview.crop.sourceHeight / questionPreview.crop.height * 100}%`, left: `${-questionPreview.crop.x / questionPreview.crop.width * 100}%`, top: `${-questionPreview.crop.y / questionPreview.crop.height * 100}%` }" alt="" />
       </span>

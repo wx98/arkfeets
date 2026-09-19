@@ -6,6 +6,7 @@ import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
 import { createSoloRoutes } from "./api/soloRoutes.js";
+import { createGameRoutes } from "./api/gameRoutes.js";
 import { MultiplayerRoomManager } from "./multiplayer/multiplayerRoomManager.js";
 import { managerCallbacks, registerMultiplayerGateway } from "./multiplayer/socketGateway.js";
 import { QuestionRepository } from "./question/questionRepository.js";
@@ -43,6 +44,7 @@ const multiplayerRoomManager = new MultiplayerRoomManager(questionRepository, {
   onRoomClosed: (roomCode, message) => managerCallbacks.get(multiplayerRoomManager)?.close(roomCode, message),
 });
 registerMultiplayerGateway(io, multiplayerRoomManager);
+app.use("/api/game", createGameRoutes(multiplayerRoomManager));
 
 const webDist = join(currentDir, "../../web/dist");
 

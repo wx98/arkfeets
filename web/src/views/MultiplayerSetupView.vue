@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { ArrowLeft, LogIn, Radio, Users } from "lucide-vue-next";
+import { ArrowLeft, Cable, LogIn, Radio, Users } from "lucide-vue-next";
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { getClientSessionId, multiplayerSocket } from "../multiplayer/socket";
-import type { Difficulty } from "../types";
+import type { AnswerSource, Difficulty } from "../types";
 
 const router = useRouter();
 const nickname = ref(localStorage.getItem("arkfeets:nickname") ?? "博士");
 const roomCode = ref("");
 const difficulty = ref<Difficulty>("medium");
 const requestedCount = ref(20);
+const answerSource = ref<AnswerSource>("WEB");
 const busy = ref(false);
 const error = ref("");
 
@@ -26,7 +27,7 @@ async function enter(mode: "create" | "join") {
   try {
     const identity = { sessionId: getClientSessionId(), nickname: name, roomCode: code };
     const room = mode === "create"
-      ? await multiplayerSocket.create({ ...identity, difficulty: difficulty.value, requestedCount: requestedCount.value })
+      ? await multiplayerSocket.create({ ...identity, difficulty: difficulty.value, requestedCount: requestedCount.value, answerSource: answerSource.value })
       : await multiplayerSocket.join(identity);
     if (room) await router.push(`/multi/${encodeURIComponent(room.roomCode)}`);
   } catch (caught) {
@@ -74,6 +75,13 @@ async function enter(mode: "create" | "join") {
             <legend>题目数量</legend>
             <div class="segmented-control">
               <label v-for="count in [20, 50, 100]" :key="count" :class="{ active: requestedCount === count }"><input v-model="requestedCount" type="radio" :value="count" />{{ count }}</label>
+            </div>
+          </fieldset>
+          <fieldset class="option-group compact-options">
+            <legend>答案来源</legend>
+            <div class="source-selector">
+              <label :class="{ active: answerSource === 'WEB' }"><input v-model="answerSource" type="radio" value="WEB" /><Users :size="17" /><span>网页抢答<small>WEB CLIENT</small></span></label>
+              <label :class="{ active: answerSource === 'EXTERNAL_API' }"><input v-model="answerSource" type="radio" value="EXTERNAL_API" /><Cable :size="17" /><span>外部接口<small>HTTP API</small></span></label>
             </div>
           </fieldset>
           <button class="button button--primary" :disabled="busy" @click="enter('create')"><Users :size="19" />创建并等待队员</button>

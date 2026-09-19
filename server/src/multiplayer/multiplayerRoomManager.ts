@@ -3,6 +3,7 @@ import type { Difficulty, Question } from "../question/types.js";
 import type { QuestionRepository } from "../question/questionRepository.js";
 
 export type MultiplayerRoomState = "LOBBY" | "ANSWERING" | "REVEAL" | "RANKING";
+export type AnswerSource = "WEB" | "EXTERNAL_API";
 
 export interface MultiplayerRoomView {
   roomCode: string;
@@ -10,6 +11,7 @@ export interface MultiplayerRoomView {
   isHost: boolean;
   difficulty: Difficulty;
   requestedCount: number;
+  answerSource: AnswerSource;
   players: Array<{
     sessionId: string;
     nickname: string;
@@ -17,6 +19,7 @@ export interface MultiplayerRoomView {
     connected: boolean;
     isHost: boolean;
     isContender: boolean;
+    source: "WEB" | "EXTERNAL";
   }>;
   question?: {
     id: string;
@@ -42,6 +45,7 @@ interface Player {
   score: number;
   connected: boolean;
   joinedAt: number;
+  source: "WEB" | "EXTERNAL";
 }
 
 interface Room {
@@ -49,6 +53,7 @@ interface Room {
   hostSessionId: string;
   difficulty: Difficulty;
   requestedCount: number;
+  answerSource: AnswerSource;
   state: MultiplayerRoomState;
   players: Map<string, Player>;
   questions: Question[];
@@ -80,6 +85,7 @@ const defaultDurations: Record<Difficulty, number> = {
 
 export class MultiplayerRoomManager {
   private readonly rooms = new Map<string, Room>();
+  private activeExternalRoomCode?: string;
   private readonly durations: Record<Difficulty, number>;
   private readonly rankingDurationMs: number;
   private readonly onRoomUpdated: (roomCode: string) => void;
@@ -92,7 +98,7 @@ export class MultiplayerRoomManager {
     this.onRoomClosed = options.onRoomClosed ?? (() => undefined);
   }
 
-  createRoom(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number }) {
+  createRoom(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number; answerSource?: AnswerSource }) {
     const code = normalizeRoomCode(input.roomCode);
     if (this.rooms.has(code)) throw new Error("房间号已存在");
     validateSession(input.sessionId, input.nickname);
@@ -103,6 +109,7 @@ export class MultiplayerRoomManager {
       hostSessionId: input.sessionId,
       difficulty: input.difficulty,
       requestedCount: input.requestedCount,
+      answerSource: input.answerSource ?? "WEB",
       state: "LOBBY",
       players: new Map(),
       questions: [],
@@ -139,6 +146,9 @@ export class MultiplayerRoomManager {
     const room = this.getRoom(roomCode);
     this.assertHost(room, sessionId);
     if (room.state !== "LOBBY") throw new Error("当前不能开始游戏");
+    if (room.answerSource === "EXTERNAL_API" && this.activeExternalRoomCode && this.activeExternalRoomCode !== room.code) {
+      throw new Error(`外部答案接口正被房间 ${this.activeExternalRoomCode} 使用`);
+    }
     const questions = this.questionRepository.drawQuestions(room.difficulty, 1_000_000);
     if (questions.length === 0) throw new Error("当前难度没有可用题目");
     room.questions = questions;
@@ -148,6 +158,7 @@ export class MultiplayerRoomManager {
     room.winnerSessionIds = undefined;
     for (const player of room.players.values()) player.score = 0;
     room.contenderSessionIds = new Set(room.players.keys());
+    if (room.answerSource === "EXTERNAL_API") this.activeExternalRoomCode = room.code;
     this.beginQuestion(room);
     return this.toView(room, sessionId);
   }
@@ -171,6 +182,36 @@ export class MultiplayerRoomManager {
     room.roundWinnerSessionId = sessionId;
     this.changed(room);
     return { view: this.toView(room, sessionId, "抢答成功，得分 +1"), correct: true };
+  }
+
+  submitExternalAnswer(userName: string, answer: string) {
+    const roomCode = this.activeExternalRoomCode;
+    if (!roomCode) throw new Error("当前没有活动的外部接口房间");
+    const room = this.getRoom(roomCode);
+    if (room.answerSource !== "EXTERNAL_API" || room.state !== "ANSWERING") {
+      throw new Error("当前外部接口房间不接受答案");
+    }
+
+    const normalizedName = normalizeExternalName(userName);
+    const sessionId = `external:${normalizedName}`;
+    let player = room.players.get(sessionId);
+    if (!player) {
+      if (room.overtime) throw new Error("加时赛不接受新玩家");
+      if (room.players.size >= 20) throw new Error("房间已满（20 人）");
+      player = createPlayer(sessionId, normalizedName, "EXTERNAL");
+      room.players.set(sessionId, player);
+      room.contenderSessionIds.add(sessionId);
+      this.changed(room);
+    }
+
+    const result = this.answer(room.code, sessionId, answer);
+    return {
+      accepted: true,
+      correct: result.correct,
+      message: result.correct ? "回答正确，得分 +1" : "答案已接收",
+      userName: player.nickname,
+      score: player.score,
+    };
   }
 
   next(roomCode: string, sessionId: string) {
@@ -222,6 +263,7 @@ export class MultiplayerRoomManager {
   dispose(): void {
     for (const room of this.rooms.values()) this.clearTimer(room);
     this.rooms.clear();
+    this.activeExternalRoomCode = undefined;
   }
 
   private beginQuestion(room: Room): void {
@@ -270,6 +312,7 @@ export class MultiplayerRoomManager {
   private finish(room: Room, winnerSessionIds: string[]): void {
     this.clearTimer(room);
     room.state = "RANKING";
+    this.releaseExternalRoom(room);
     room.winnerSessionIds = winnerSessionIds;
     room.rankingEndsAt = Date.now() + this.rankingDurationMs;
     room.timer = setTimeout(() => this.resetToLobby(room), this.rankingDurationMs);
@@ -280,6 +323,10 @@ export class MultiplayerRoomManager {
   private resetToLobby(room: Room): void {
     this.clearTimer(room);
     room.state = "LOBBY";
+    this.releaseExternalRoom(room);
+    for (const [sessionId, player] of room.players) {
+      if (player.source === "EXTERNAL") room.players.delete(sessionId);
+    }
     room.questions = [];
     room.currentIndex = 0;
     room.regularQuestionCount = 0;
@@ -314,6 +361,7 @@ export class MultiplayerRoomManager {
       isHost: room.hostSessionId === sessionId,
       difficulty: room.difficulty,
       requestedCount: room.requestedCount,
+      answerSource: room.answerSource,
       players: [...room.players.values()]
         .sort((left, right) => right.score - left.score || left.joinedAt - right.joinedAt)
         .map((player) => ({
@@ -323,6 +371,7 @@ export class MultiplayerRoomManager {
           connected: player.connected,
           isHost: player.sessionId === room.hostSessionId,
           isContender: !room.overtime || room.contenderSessionIds.has(player.sessionId),
+          source: player.source,
         })),
       question: showQuestion && question ? {
         id: question.id,
@@ -376,8 +425,13 @@ export class MultiplayerRoomManager {
 
   private destroyRoom(room: Room, message: string): void {
     this.clearTimer(room);
+    this.releaseExternalRoom(room);
     this.rooms.delete(room.code);
     this.onRoomClosed(room.code, message);
+  }
+
+  private releaseExternalRoom(room: Room): void {
+    if (this.activeExternalRoomCode === room.code) this.activeExternalRoomCode = undefined;
   }
 }
 
@@ -392,6 +446,12 @@ function validateSession(sessionId: string, nickname: string): void {
   if (nickname.trim().length < 1 || nickname.trim().length > 20) throw new Error("玩家代号需为 1-20 个字符");
 }
 
-function createPlayer(sessionId: string, nickname: string): Player {
-  return { sessionId, nickname: nickname.trim(), score: 0, connected: true, joinedAt: Date.now() };
+function normalizeExternalName(value: string): string {
+  const normalized = value.replace(/\s/gu, "");
+  if (normalized.length < 1 || normalized.length > 20) throw new Error("用户昵称需为 1-20 个非空字符");
+  return normalized;
+}
+
+function createPlayer(sessionId: string, nickname: string, source: "WEB" | "EXTERNAL" = "WEB"): Player {
+  return { sessionId, nickname: nickname.trim(), score: 0, connected: true, joinedAt: Date.now(), source };
 }

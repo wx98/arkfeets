@@ -127,7 +127,7 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
 .home-notice { width: min(540px,100%); margin: 14px 0 0; padding: 10px 12px; color: #683d00; background: #fff0ce; border-left: 4px solid #ff9f43; font-size: 12px; }
 .multi-setup { position: relative; z-index: 1; width: min(1080px,calc(100% - 40px)); margin: 0 auto; padding: 58px 0 72px; }
 .multi-setup__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 34px; background: #9ca19f; border: 1px solid #9ca19f; }
-.terminal-form, .create-config { min-height: 430px; padding: clamp(24px,4vw,46px); background: rgba(248,249,246,.96); }
+.terminal-form, .create-config { min-height: 520px; padding: clamp(24px,4vw,46px); background: rgba(248,249,246,.96); }
 .terminal-form { display: flex; flex-direction: column; gap: 18px; }
 .terminal-form label { display: grid; gap: 7px; color: #5f6463; font-size: 10px; font-weight: 900; }
 .terminal-form input { width: 100%; height: 50px; padding: 0 14px; border: 1px solid #969b99; border-radius: 0; color: var(--ink); background: #fff; outline: 0; }
@@ -145,6 +145,12 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
 .create-config .difficulty-segments { grid-template-columns: repeat(4,1fr); }
 .create-config .segmented-control label { border-color: #555a5b; }
 .create-config > .button { width: 100%; margin-top: auto; }
+.source-selector { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.source-selector label { position: relative; min-height: 58px; display: flex; align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid #555a5b; color: #aeb3b3; cursor: pointer; }
+.source-selector input { position: absolute; opacity: 0; pointer-events: none; }
+.source-selector label.active { color: var(--ink); border-color: var(--signal); background: var(--signal); }
+.source-selector span { display: flex; flex-direction: column; font-size: 12px; font-weight: 900; }
+.source-selector small { margin-top: 2px; color: #7c8180; font-size: 7px; }
 
 .room-code { display: flex; flex-direction: column; color: #fff; }
 .room-code small { color: #9ca1a2; font-size: 7px; font-weight: 900; }
@@ -178,6 +184,11 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
 .mini-scoreboard li span { color: #8b9090; font-size: 9px; }
 .mini-scoreboard li b { color: #798300; font-size: 15px; }
 .mini-scoreboard li.muted { opacity: .4; }
+.external-api-console { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px; padding: 14px; color: #fff; background: var(--ink); border-left: 4px solid var(--cyan); }
+.external-api-console svg { color: var(--cyan); }
+.external-api-console > span { padding: 3px 5px; color: var(--ink); background: var(--signal); font-size: 8px; font-weight: 950; }
+.external-api-console code { min-width: 0; overflow-wrap: anywhere; color: #dfe2e1; font-size: 11px; }
+.external-api-console pre { grid-column: 1 / -1; margin: 7px 0 0; padding-top: 10px; border-top: 1px solid #45494b; color: #aeb4b2; white-space: pre-wrap; font-size: 10px; }
 
 .ranking-page { position: relative; z-index: 1; width: min(980px,calc(100% - 40px)); margin: 0 auto; padding: clamp(42px,7vw,86px) 0; }
 .ranking-heading { position: relative; padding-left: 68px; border-bottom: 1px solid var(--line); }
@@ -205,7 +216,7 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
   .game-layout { grid-template-columns: 1fr; }
   .answer-panel { border-left: 0; border-top: 1px solid #afb4b2; }
   .multi-setup__grid, .room-lobby { grid-template-columns: 1fr; }
-  .terminal-form, .create-config { min-height: 360px; }
+  .terminal-form, .create-config { min-height: 420px; }
   .room-lobby { min-height: 0; }
 }
 @media (max-width: 600px) {
@@ -239,6 +250,7 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
   .multi-setup__grid { margin-top: 24px; }
   .terminal-form, .create-config { min-height: 340px; padding: 24px 18px; }
   .create-config .difficulty-segments { grid-template-columns: repeat(2,1fr); }
+  .source-selector { grid-template-columns: 1fr; }
   .room-code { margin-right: auto; }
   .room-lobby { display: block; }
   .lobby-brief, .player-roster { padding: 34px 22px; }

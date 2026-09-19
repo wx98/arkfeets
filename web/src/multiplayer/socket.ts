@@ -1,5 +1,5 @@
 import { io } from "socket.io-client";
-import type { Difficulty, MultiplayerRoomView } from "../types";
+import type { AnswerSource, Difficulty, MultiplayerRoomView } from "../types";
 
 const socket = io({ autoConnect: true });
 
@@ -17,7 +17,7 @@ export function getClientSessionId(): string {
 }
 
 export const multiplayerSocket = {
-  create(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number }) {
+  create(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number; answerSource: AnswerSource }) {
     return emit("room:create", input);
   },
   join(input: { roomCode: string; sessionId: string; nickname: string }) {

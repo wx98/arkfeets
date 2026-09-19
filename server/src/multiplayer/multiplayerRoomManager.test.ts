@@ -92,6 +92,36 @@ describe("MultiplayerRoomManager", () => {
     expect(manager.hasRoom("close")).toBe(false);
     expect(closed).toHaveBeenCalledWith("CLOSE", "房主已离开，房间已解散");
   });
+
+  it("allows only one active external API room", () => {
+    const manager = createManager(3);
+    manager.createRoom({ roomCode: "api-one", ...host, difficulty: "medium", requestedCount: 20, answerSource: "EXTERNAL_API" });
+    manager.createRoom({ roomCode: "api-two", sessionId: "session-host-two", nickname: "博士2", difficulty: "medium", requestedCount: 20, answerSource: "EXTERNAL_API" });
+
+    manager.start("api-one", host.sessionId);
+    expect(() => manager.start("api-two", "session-host-two")).toThrow("外部答案接口正被房间 API-ONE 使用");
+    manager.disconnect("api-one", host.sessionId);
+    expect(() => manager.start("api-two", "session-host-two")).not.toThrow();
+    manager.dispose();
+  });
+
+  it("rejects external answers when no external room is active", () => {
+    const manager = createManager(3);
+    expect(() => manager.submitExternalAnswer("外部玩家", "答案1")).toThrow("当前没有活动的外部接口房间");
+  });
+
+  it("reuses the same external player after whitespace normalization", () => {
+    const manager = createManager(3);
+    manager.createRoom({ roomCode: "api", ...host, difficulty: "medium", requestedCount: 20, answerSource: "EXTERNAL_API" });
+    manager.start("api", host.sessionId);
+
+    expect(manager.submitExternalAnswer(" 外 部 1 ", "错误")).toMatchObject({ accepted: true, correct: false, userName: "外部1", score: 0 });
+    expect(manager.submitExternalAnswer("外部1", "答案1")).toMatchObject({ accepted: true, correct: true, userName: "外部1", score: 1 });
+    const room = manager.getView("api", host.sessionId);
+    expect(room.players).toHaveLength(2);
+    expect(room.players.find((player) => player.source === "EXTERNAL")?.score).toBe(1);
+    manager.dispose();
+  });
 });
 
 function createManager(count: number, options: ConstructorParameters<typeof MultiplayerRoomManager>[1] = {}) {

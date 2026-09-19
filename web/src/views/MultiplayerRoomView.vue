@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Crown, LogOut, Medal, Radio, Send, Timer, Trophy, Users } from "lucide-vue-next";
+import { ArrowLeft, ArrowRight, Cable, Crown, LogOut, Medal, Radio, Send, Timer, Trophy, Users } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import GameCanvas from "../components/GameCanvas.vue";
@@ -24,7 +24,7 @@ const secondsLeft = computed(() => room.value?.state === "ANSWERING" && room.val
 const timerProgress = computed(() => room.value?.question
   ? Math.max(0, Math.min(100, secondsLeft.value / room.value.question.durationSeconds * 100)) : 0);
 const self = computed(() => room.value?.players.find((player) => player.sessionId === sessionId));
-const canAnswer = computed(() => room.value?.state === "ANSWERING" && (!room.value.question?.overtime || self.value?.isContender));
+const canAnswer = computed(() => room.value?.answerSource === "WEB" && room.value?.state === "ANSWERING" && (!room.value.question?.overtime || self.value?.isContender));
 const winners = computed(() => room.value?.players.filter((player) => room.value?.winnerSessionIds?.includes(player.sessionId)) ?? []);
 
 onMounted(async () => {
@@ -93,14 +93,14 @@ async function leave() {
           <p class="eyebrow">SQUAD ASSEMBLY / 小队集结</p>
           <h1>{{ room.roomCode }}</h1>
           <p>等待队员加入。游戏开始后房间将锁定，最多 20 人。</p>
-          <dl><div><dt>难度</dt><dd>{{ room.difficulty }}</dd></div><div><dt>题目</dt><dd>{{ room.requestedCount }}</dd></div></dl>
+          <dl><div><dt>难度</dt><dd>{{ room.difficulty }}</dd></div><div><dt>题目</dt><dd>{{ room.requestedCount }}</dd></div><div><dt>答案来源</dt><dd>{{ room.answerSource === 'EXTERNAL_API' ? 'HTTP API' : 'WEB' }}</dd></div></dl>
           <button v-if="room.isHost" class="button button--primary lobby-start" @click="act(() => multiplayerSocket.start(roomCode))"><Radio :size="19" />开始抢答</button>
           <p v-else class="waiting-copy">等待房主开始...</p>
           <p v-if="error" class="error-text">{{ error }}</p>
         </div>
         <div class="player-roster">
           <div class="roster-title"><span>PLAYERS</span><strong>{{ room.players.length }} / 20</strong></div>
-          <ol><li v-for="(player, index) in room.players" :key="player.sessionId" :class="{ offline: !player.connected }"><span>{{ String(index + 1).padStart(2, '0') }}</span><strong>{{ player.nickname }}</strong><Crown v-if="player.isHost" :size="15" /><small>{{ player.connected ? 'READY' : 'OFFLINE' }}</small></li></ol>
+          <ol><li v-for="(player, index) in room.players" :key="player.sessionId" :class="{ offline: !player.connected }"><span>{{ String(index + 1).padStart(2, '0') }}</span><strong>{{ player.nickname }}</strong><Crown v-if="player.isHost" :size="15" /><small>{{ player.source === 'EXTERNAL' ? 'API' : (player.connected ? 'READY' : 'OFFLINE') }}</small></li></ol>
         </div>
       </section>
     </template>
@@ -121,9 +121,16 @@ async function leave() {
           </div>
 
           <template v-if="room.state === 'ANSWERING'">
-            <div><p class="eyebrow">QUICK RESPONSE / 抢答</p><h2>{{ canAnswer ? '识别目标' : '加时观战' }}</h2></div>
-            <form v-if="canAnswer" class="answer-form" @submit.prevent="submit"><input v-model="answer" autofocus maxlength="100" placeholder="输入答案" autocomplete="off" /><button class="button button--primary" type="submit"><Send :size="18" />提交抢答</button></form>
-            <p v-else class="spectator-copy">本轮仅最高分并列玩家可以作答。</p>
+            <template v-if="room.answerSource === 'EXTERNAL_API'">
+              <div><p class="eyebrow">EXTERNAL LINK / 外部接入</p><h2>接口监听中</h2></div>
+              <div class="external-api-console"><Cable :size="22" /><span>POST</span><code>/api/game/submit-answer</code><pre>{ "userName": "玩家名", "answer": "答案" }</pre></div>
+              <p class="spectator-copy">收到的昵称会自动加入计分板，无需携带房间号。</p>
+            </template>
+            <template v-else>
+              <div><p class="eyebrow">QUICK RESPONSE / 抢答</p><h2>{{ canAnswer ? '识别目标' : '加时观战' }}</h2></div>
+              <form v-if="canAnswer" class="answer-form" @submit.prevent="submit"><input v-model="answer" autofocus maxlength="100" placeholder="输入答案" autocomplete="off" /><button class="button button--primary" type="submit"><Send :size="18" />提交抢答</button></form>
+              <p v-else class="spectator-copy">本轮仅最高分并列玩家可以作答。</p>
+            </template>
           </template>
 
           <template v-else>

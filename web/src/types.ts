@@ -23,6 +23,7 @@ export interface SoloGameView {
 }
 
 export type MultiplayerRoomState = "LOBBY" | "ANSWERING" | "REVEAL" | "RANKING";
+export type AnswerSource = "WEB" | "EXTERNAL_API";
 
 export interface MultiplayerRoomView {
   roomCode: string;
@@ -30,6 +31,7 @@ export interface MultiplayerRoomView {
   isHost: boolean;
   difficulty: Difficulty;
   requestedCount: number;
+  answerSource: AnswerSource;
   players: Array<{
     sessionId: string;
     nickname: string;
@@ -37,6 +39,7 @@ export interface MultiplayerRoomView {
     connected: boolean;
     isHost: boolean;
     isContender: boolean;
+    source: "WEB" | "EXTERNAL";
   }>;
   question?: {
     id: string;

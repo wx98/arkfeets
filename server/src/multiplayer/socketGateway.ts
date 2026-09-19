@@ -1,7 +1,7 @@
 import type { Server, Socket } from "socket.io";
 import { z } from "zod";
 import { difficulties } from "../question/types.js";
-import type { MultiplayerRoomManager } from "./multiplayerRoomManager.js";
+import { type AnswerSource, type MultiplayerRoomManager } from "./multiplayerRoomManager.js";
 
 const roomCodeSchema = z.string().min(2).max(20);
 const identitySchema = z.object({ sessionId: z.string().min(8).max(100), nickname: z.string().trim().min(1).max(20) });
@@ -10,6 +10,7 @@ const createSchema = identitySchema.extend({
   roomCode: roomCodeSchema,
   difficulty: z.enum(difficulties),
   requestedCount: z.union([z.literal(20), z.literal(50), z.literal(100)]),
+  answerSource: z.enum(["WEB", "EXTERNAL_API"] satisfies [AnswerSource, AnswerSource]),
 });
 const joinSchema = identitySchema.extend({ roomCode: roomCodeSchema });
 const answerSchema = z.object({ roomCode: roomCodeSchema, answer: z.string().max(100) });

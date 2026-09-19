@@ -6,6 +6,7 @@ const socket = io({ autoConnect: true });
 interface AckSuccess { ok: true; room: MultiplayerRoomView | null }
 interface AckFailure { ok: false; message: string }
 type AckResponse = AckSuccess | AckFailure;
+export type ConnectionState = "CONNECTED" | "CONNECTING" | "DISCONNECTED";
 
 export function getClientSessionId(): string {
   const key = "arkfeets:session-id";
@@ -45,6 +46,22 @@ export const multiplayerSocket = {
   onClosed(listener: (event: { message: string }) => void) {
     socket.on("room:closed", listener);
     return () => socket.off("room:closed", listener);
+  },
+  onConnectionChange(listener: (state: ConnectionState) => void) {
+    const connected = () => listener("CONNECTED");
+    const disconnected = () => listener("DISCONNECTED");
+    const connecting = () => listener("CONNECTING");
+    socket.on("connect", connected);
+    socket.on("disconnect", disconnected);
+    socket.io.on("reconnect_attempt", connecting);
+    socket.io.on("reconnect_error", disconnected);
+    listener(socket.connected ? "CONNECTED" : "CONNECTING");
+    return () => {
+      socket.off("connect", connected);
+      socket.off("disconnect", disconnected);
+      socket.io.off("reconnect_attempt", connecting);
+      socket.io.off("reconnect_error", disconnected);
+    };
   },
 };
 

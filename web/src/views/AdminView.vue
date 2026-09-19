@@ -190,6 +190,11 @@ async function api<T = unknown>(url: string, init: RequestInit = {}, authenticat
         <p v-if="message" class="admin-message">{{ message }}</p>
         <p v-if="error" class="error-text">{{ error }}</p>
       </article>
+      <article v-else class="admin-empty">
+        <Database :size="42" />
+        <h2>题库为空</h2>
+        <p>导入资源包后，题目会出现在这里。</p>
+      </article>
     </section>
     <section v-else class="center-state">正在读取题库...</section>
   </main>

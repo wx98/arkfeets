@@ -56,6 +56,12 @@ const multiplayerRoomManager = new MultiplayerRoomManager(questionRepository, {
 registerMultiplayerGateway(io, multiplayerRoomManager);
 app.use("/api/game", createGameRoutes(multiplayerRoomManager));
 
+app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
+  const message = error instanceof Error ? error.message : "请求处理失败";
+  const status = typeof error === "object" && error !== null && "code" in error && error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+  response.status(status).json({ message });
+});
+
 const webDist = join(currentDir, "../../web/dist");
 
 if (existsSync(webDist)) {

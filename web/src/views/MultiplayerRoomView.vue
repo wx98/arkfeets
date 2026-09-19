@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Cable, Crown, LogOut, Medal, Radio, Send, Timer,
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import GameCanvas from "../components/GameCanvas.vue";
-import { getClientSessionId, multiplayerSocket } from "../multiplayer/socket";
+import { getClientSessionId, multiplayerSocket, type ConnectionState } from "../multiplayer/socket";
 import type { MultiplayerRoomView } from "../types";
 
 const route = useRoute();
@@ -11,6 +11,8 @@ const router = useRouter();
 const room = ref<MultiplayerRoomView>();
 const answer = ref("");
 const error = ref("");
+const loading = ref(true);
+const connectionState = ref<ConnectionState>("CONNECTING");
 const now = ref(Date.now());
 const roomCode = String(route.params.roomCode);
 const sessionId = getClientSessionId();
@@ -18,6 +20,9 @@ const nickname = localStorage.getItem("arkfeets:nickname") ?? "博士";
 let ticker: number | undefined;
 let offUpdate: (() => void) | undefined;
 let offClosed: (() => void) | undefined;
+let offConnection: (() => void) | undefined;
+let connectionWasLost = false;
+let reconnecting = false;
 
 const secondsLeft = computed(() => room.value?.state === "ANSWERING" && room.value.question
   ? Math.max(0, Math.ceil((room.value.question.endsAt - now.value) / 1000)) : 0);
@@ -38,11 +43,30 @@ onMounted(async () => {
   offClosed = multiplayerSocket.onClosed(async ({ message }) => {
     await router.replace({ path: "/", query: { notice: message } });
   });
+  offConnection = multiplayerSocket.onConnectionChange(async (state) => {
+    connectionState.value = state;
+    if (state === "DISCONNECTED") connectionWasLost = true;
+    if (state !== "CONNECTED" || !connectionWasLost || reconnecting) return;
+    reconnecting = true;
+    connectionState.value = "CONNECTING";
+    try {
+      room.value = await multiplayerSocket.join({ roomCode, sessionId, nickname }) ?? undefined;
+      connectionWasLost = false;
+      connectionState.value = "CONNECTED";
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "房间无法恢复";
+      await router.replace({ path: "/", query: { notice: message } });
+    } finally {
+      reconnecting = false;
+    }
+  });
   ticker = window.setInterval(() => now.value = Date.now(), 200);
   try {
     room.value = await multiplayerSocket.join({ roomCode, sessionId, nickname }) ?? undefined;
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "无法加入房间";
+  } finally {
+    loading.value = false;
   }
 });
 
@@ -50,6 +74,7 @@ onBeforeUnmount(() => {
   window.clearInterval(ticker);
   offUpdate?.();
   offClosed?.();
+  offConnection?.();
 });
 
 async function act(action: () => Promise<MultiplayerRoomView | null>) {
@@ -85,7 +110,12 @@ async function leave() {
       </div>
     </header>
 
-    <div v-if="error && !room" class="center-state"><p>{{ error }}</p><button class="button" @click="router.push('/multi')">返回房间终端</button></div>
+    <div v-if="connectionState !== 'CONNECTED'" class="connection-banner" role="status">
+      {{ connectionState === 'CONNECTING' ? '正在连接作战服务器...' : '连接已中断，正在等待自动重连' }}
+    </div>
+
+    <div v-if="loading" class="center-state">正在接入房间...</div>
+    <div v-else-if="error && !room" class="center-state"><p>{{ error }}</p><button class="button" @click="router.push('/multi')">返回房间终端</button></div>
 
     <template v-else-if="room?.state === 'LOBBY'">
       <section class="room-lobby">

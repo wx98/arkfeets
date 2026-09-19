@@ -49,6 +49,22 @@ describe("QuestionAdminService", () => {
     expect(library.questions[0]).toMatchObject({ id: "existing", validation: { valid: true } });
   });
 
+  it("reads and writes structured image metadata tags", () => {
+    const service = createService();
+    service.updateImageMetadata("existing.png", {
+      name: "能天使",
+      answers: ["能天使", "阿能"],
+      hint: "拉特兰干员",
+      difficulty: ["simple", "medium", "hard", "hell"],
+      tags: [{ "星级": "6星" }, { "职业": "狙击" }],
+    });
+    expect(service.list().images[0].metadata.tags).toEqual([{ "星级": "6星" }, { "职业": "狙击" }]);
+    expect(() => service.updateImageMetadata("existing.png", {
+      name: "错误标签",
+      tags: [{ "职业": "狙击", "分支": "速射手" }],
+    })).toThrow("每个原图标签必须且只能包含一个键值");
+  });
+
   it("adds full images without creating question drafts", () => {
     const service = createService();
     expect(service.addImages([{ buffer: Buffer.from("new"), mimetype: "image/png", originalname: "能天使.png" }])).toEqual({

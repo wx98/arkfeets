@@ -15,8 +15,9 @@ interface ImageMetadata {
   answers: string[];
   hint: string;
   difficulty: Difficulty[];
-  tags: string[];
+  tags: Array<Record<string, string>>;
 }
+interface MetadataTagRow { key: string; value: string }
 interface LibraryImage {
   fileName: string;
   url: string;
@@ -68,10 +69,11 @@ const isNew = ref(false);
 const form = ref<QuestionRecord>(emptyQuestion());
 const tagText = ref("");
 const metadataForm = ref<ImageMetadata>(emptyMetadata());
-const metadataTagText = ref("");
+const metadataTagRows = ref<MetadataTagRow[]>([]);
 const cropper = ref<InstanceType<typeof Cropper>>();
 const cropAspect = ref<number | undefined>();
 const cropConfirmed = ref(false);
+const isCropping = ref(false);
 const hoveredQuestion = ref<LibraryQuestion>();
 const questionPreviewPosition = ref({ x: 0, y: 0 });
 const busy = ref(false);
@@ -90,7 +92,8 @@ const filteredImages = computed(() => (library.value?.images ?? []).filter((imag
   if (!normalizedNeedle.value) return true;
   const related = relatedQuestions(image);
   return normalizeSearch([
-    image.fileName, image.metadata.name, image.metadata.hint, ...image.metadata.answers, ...image.metadata.tags,
+    image.fileName, image.metadata.name, image.metadata.hint, ...image.metadata.answers,
+    ...image.metadata.tags.flatMap((tag) => Object.entries(tag).flat()),
     ...related.flatMap((question) => [question.info?.title ?? "", ...(question.info?.answers ?? [])]),
   ].join(" ")).includes(normalizedNeedle.value);
 }));
@@ -153,7 +156,8 @@ function selectImage(image: LibraryImage) {
   selectedQuestionId.value = "";
   isNew.value = false;
   metadataForm.value = clone(image.metadata);
-  metadataTagText.value = image.metadata.tags.join("，");
+  metadataTagRows.value = metadataTagsToRows(image.metadata.tags);
+  isCropping.value = false;
   message.value = "";
   error.value = "";
 }
@@ -174,6 +178,7 @@ async function selectQuestion(question: LibraryQuestion) {
   if (!form.value.answers.length) form.value.answers = [""];
   tagText.value = form.value.tags.join("，");
   cropConfirmed.value = Boolean(form.value.question);
+  isCropping.value = false;
   await nextTick();
   restoreCrop();
 }
@@ -187,11 +192,12 @@ function beginQuestion(image: LibraryImage) {
     answers: image.metadata.answers.length ? [...image.metadata.answers] : [""],
     hint: image.metadata.hint,
     difficulty: [...image.metadata.difficulty],
-    tags: [...image.metadata.tags],
+    tags: metadataTagsToQuestionTags(image.metadata.tags),
     originalImage: image.fileName,
   };
   tagText.value = form.value.tags.join("，");
   cropConfirmed.value = false;
+  isCropping.value = false;
   cropAspect.value = undefined;
   message.value = "";
   error.value = "";
@@ -204,15 +210,34 @@ function restoreCrop() {
   instance?.setCoordinates?.({ left: crop.x, top: crop.y, width: crop.width, height: crop.height });
 }
 
-function confirmCrop() {
+function toggleCropEditing() {
+  if (!isCropping.value) {
+    isCropping.value = true;
+    cropConfirmed.value = false;
+    message.value = "";
+    error.value = "";
+    return;
+  }
   if (!captureCurrentCrop()) return;
+  isCropping.value = false;
   cropConfirmed.value = true;
-  message.value = "当前裁切已确认，保存题目后生效";
+  message.value = "裁切已保存并锁定，保存题目后生效";
 }
 
 function captureCurrentCrop(): boolean {
   const result = cropper.value?.getResult() as { coordinates?: { left: number; top: number; width: number; height: number }; image?: { width: number; height: number } } | undefined;
   if (!result?.coordinates || !result.image) { error.value = "请先在原图上框选谜面"; return false; }
+  applyCropResult({ coordinates: result.coordinates, image: result.image });
+  return true;
+}
+
+function handleCropChange(result: { coordinates?: { left: number; top: number; width: number; height: number }; image?: { width: number; height: number } }) {
+  if (!isCropping.value || !result.coordinates || !result.image) return;
+  applyCropResult({ coordinates: result.coordinates, image: result.image });
+  cropConfirmed.value = false;
+}
+
+function applyCropResult(result: { coordinates: { left: number; top: number; width: number; height: number }; image: { width: number; height: number } }) {
   form.value.question = {
     x: Math.round(result.coordinates.left),
     y: Math.round(result.coordinates.top),
@@ -221,7 +246,6 @@ function captureCurrentCrop(): boolean {
     sourceWidth: Math.round(result.image.width),
     sourceHeight: Math.round(result.image.height),
   };
-  return true;
 }
 
 async function saveQuestion() {
@@ -254,7 +278,10 @@ async function saveMetadata() {
     const payload = {
       ...metadataForm.value,
       answers: metadataForm.value.answers.map((answer) => answer.trim()).filter(Boolean),
-      tags: metadataTagText.value.split(/[，,]/u).map((tag) => tag.trim()).filter(Boolean),
+      tags: metadataTagRows.value
+        .map((tag) => ({ key: tag.key.trim(), value: tag.value.trim() }))
+        .filter((tag) => tag.key)
+        .map((tag) => ({ [tag.key]: tag.value })),
     };
     await api(`/api/admin/images/${encodeURIComponent(selectedImage.value!.fileName)}/metadata`, { method: "PUT", body: JSON.stringify(payload) });
     await loadLibrary("", selectedImage.value!.fileName);
@@ -266,6 +293,8 @@ function removeAnswer(target: QuestionRecord | ImageMetadata, index: number) {
   target.answers.splice(index, 1);
   if (!target.answers.length) target.answers.push("");
 }
+function addMetadataTag() { metadataTagRows.value.push({ key: "", value: "" }); }
+function removeMetadataTag(index: number) { metadataTagRows.value.splice(index, 1); }
 
 async function uploadImages(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -337,6 +366,12 @@ function emptyMetadata(): ImageMetadata {
 }
 function emptyQuestion(): QuestionRecord {
   return { id: "", title: "", answers: [""], hint: "", difficulty: ["simple", "medium", "hard", "hell"], tags: [], originalImage: "", question: null, enabled: false };
+}
+function metadataTagsToRows(tags: Array<Record<string, string>>): MetadataTagRow[] {
+  return tags.flatMap((tag) => Object.entries(tag).map(([key, value]) => ({ key, value })));
+}
+function metadataTagsToQuestionTags(tags: Array<Record<string, string>>): string[] {
+  return metadataTagsToRows(tags).map((tag) => tag.value ? `${tag.key}:${tag.value}` : tag.key);
 }
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLocaleLowerCase(); }
@@ -454,12 +489,14 @@ function questionPreviewStyle(question: LibraryQuestion) {
             <figure><figcaption>谜面 · 实时裁切</figcaption><div v-if="form.question" class="crop-preview" :style="{ aspectRatio: previewRatio }"><img :src="currentImageUrl" :style="previewStyle" alt="谜面预览" /></div><div v-else class="crop-preview crop-preview--empty">尚未确认裁切</div></figure>
           </div>
           <div class="crop-ratios">
-            <button :class="{ active: cropAspect === 16 / 9 }" @click="cropAspect = 16 / 9">16:9</button>
-            <button :class="{ active: cropAspect === 1 }" @click="cropAspect = 1">1:1</button>
-            <button :class="{ active: !cropAspect }" @click="cropAspect = undefined">自由</button>
+            <button :class="{ active: cropAspect === 16 / 9 }" :disabled="!isCropping" @click="cropAspect = 16 / 9">16:9</button>
+            <button :class="{ active: cropAspect === 1 }" :disabled="!isCropping" @click="cropAspect = 1">1:1</button>
+            <button :class="{ active: !cropAspect }" :disabled="!isCropping" @click="cropAspect = undefined">自由</button>
           </div>
-          <Cropper v-if="currentImageUrl" ref="cropper" class="question-cropper" :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }" image-restriction="stencil" @ready="restoreCrop" />
-          <button class="button crop-confirm" :disabled="busy" @click="confirmCrop"><Scissors :size="18" />确认当前裁切</button>
+          <Cropper v-if="currentImageUrl" ref="cropper" class="question-cropper" :class="{ 'is-locked': !isCropping }" :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }" image-restriction="stencil" @ready="restoreCrop" @change="handleCropChange" />
+          <button class="button crop-confirm" :class="{ 'button--primary': isCropping }" :disabled="busy" @click="toggleCropEditing">
+            <component :is="isCropping ? Save : Scissors" :size="18" />{{ isCropping ? '保存裁切' : '裁剪' }}
+          </button>
         </section>
 
         <section class="admin-form-section">
@@ -503,7 +540,15 @@ function questionPreviewStyle(question: LibraryQuestion) {
               <div class="field-heading"><span>默认答案与别名</span><button class="icon-button" title="增加别名" @click="addAnswer(metadataForm)"><Plus :size="15" /></button></div>
               <div v-for="index in metadataForm.answers.length" :key="index" class="answer-row"><input v-model="metadataForm.answers[index - 1]" /><button class="icon-button" title="删除答案" @click="removeAnswer(metadataForm, index - 1)"><Trash2 :size="15" /></button></div>
             </div>
-            <label class="wide">默认标签<input v-model="metadataTagText" placeholder="使用逗号分隔" /></label>
+            <div class="wide answer-fields metadata-tag-fields">
+              <div class="field-heading"><span>原图属性标签</span><button class="icon-button" title="增加属性" @click="addMetadataTag"><Plus :size="15" /></button></div>
+              <div v-for="(tag, index) in metadataTagRows" :key="index" class="metadata-tag-row">
+                <input v-model="tag.key" maxlength="50" placeholder="属性名，例如职业" />
+                <input v-model="tag.value" maxlength="200" placeholder="属性值，例如狙击" />
+                <button class="icon-button" title="删除属性" @click="removeMetadataTag(index)"><Trash2 :size="15" /></button>
+              </div>
+              <p v-if="!metadataTagRows.length" class="metadata-tag-empty">暂无属性标签</p>
+            </div>
             <fieldset class="wide difficulty-checks"><legend>默认难度</legend><label v-for="item in difficultyOptions" :key="item.value"><input v-model="metadataForm.difficulty" type="checkbox" :value="item.value" />{{ item.label }}</label></fieldset>
           </div>
           <button class="button button--primary metadata-save" :disabled="busy" @click="saveMetadata"><Save :size="17" />保存默认信息</button>

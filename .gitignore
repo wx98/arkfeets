@@ -280,3 +280,5 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+/server/resource/full_data/*json
+/server/resource/full_data/*png

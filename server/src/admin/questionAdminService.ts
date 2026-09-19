@@ -24,7 +24,10 @@ export const imageMetadataSchema = z.object({
   answers: z.array(z.string().trim().min(1).max(100)).max(30).default([]),
   hint: z.string().trim().max(300).default(""),
   difficulty: z.array(z.enum(difficulties)).default([...difficulties]),
-  tags: z.array(z.string().trim().min(1).max(50)).max(30).default([]),
+  tags: z.array(
+    z.record(z.string().trim().min(1).max(50), z.string().trim().max(200))
+      .refine((tag) => Object.keys(tag).length === 1, "每个原图标签必须且只能包含一个键值"),
+  ).max(50).default([]),
 }).strict();
 
 const questionInputSchema = questionRecordSchema.omit({ id: true });

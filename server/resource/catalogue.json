@@ -1,14 +1,6 @@
 [
   {
-    "id": "investigator",
-    "file": "question_data/investigator.json"
-  },
-  {
-    "id": "evidence-wall",
-    "file": "question_data/evidence-wall.json"
-  },
-  {
-    "id": "command-room",
-    "file": "question_data/command-room.json"
+    "id": "demo",
+    "file": "question_data/demo.json"
   }
 ]

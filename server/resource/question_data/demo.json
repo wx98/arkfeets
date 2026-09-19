@@ -1,0 +1,27 @@
+{
+  "id": "demo",
+  "title": "示例",
+  "answers": [
+    "示例"
+  ],
+  "hint": "这是一个提示",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "示例"
+  ],
+  "originalImage": "demo.png",
+  "question": {
+    "x": 366,
+    "y": 353,
+    "width": 373,
+    "height": 373,
+    "sourceWidth": 1024,
+    "sourceHeight": 1536
+  },
+  "enabled": true
+}

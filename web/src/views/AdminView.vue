@@ -421,7 +421,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
             </div>
             <div v-if="expandedImageName === image.fileName" class="asset-questions">
               <button class="asset-add-question" title="基于此原图新增题目" @click="beginQuestion(image)"><Plus :size="15" />新增题目</button>
-              <button v-for="question in relatedQuestions(image)" :key="question.id" @click="selectQuestion(question)">
+              <button v-for="question in relatedQuestions(image)" :key="question.id" @click="selectQuestion(question)" @mouseenter="showQuestionPreview(question, $event)" @mousemove="moveQuestionPreview" @mouseleave="hoveredQuestion = undefined">
                 <component :is="question.validation.valid ? CheckCircle2 : AlertTriangle" :size="13" />
                 <span>{{ question.info?.title || question.id }}</span>
               </button>

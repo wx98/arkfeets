@@ -19,7 +19,10 @@ class GuessScene extends Phaser.Scene {
   create() {
     scene = this;
     this.cameras.main.setBackgroundColor("#101214");
-    this.add.rectangle(480, 260, 854, 446, 0x080a0b).setStrokeStyle(2, 0xf2ff3d);
+    this.drawTransparencyGrid();
+    const frame = this.add.graphics();
+    frame.lineStyle(2, 0xf2ff3d);
+    frame.strokeRect(53, 37, 854, 446);
     this.add.text(54, 19, "PRTS // VISUAL FEED", {
       color: "#f2ff3d",
       fontFamily: "Arial, sans-serif",
@@ -27,6 +30,21 @@ class GuessScene extends Phaser.Scene {
       fontStyle: "bold",
     });
     renderCurrent();
+  }
+
+  private drawTransparencyGrid() {
+    const left = 55;
+    const top = 39;
+    const width = 850;
+    const height = 442;
+    const cellSize = 18;
+    const grid = this.add.graphics();
+    for (let y = 0; y < height; y += cellSize) {
+      for (let x = 0; x < width; x += cellSize) {
+        grid.fillStyle((x / cellSize + y / cellSize) % 2 === 0 ? 0xf2f4f3 : 0xd5d9d7);
+        grid.fillRect(left + x, top + y, Math.min(cellSize, width - x), Math.min(cellSize, height - y));
+      }
+    }
   }
 
   showImage(url: string, crop?: CropRect) {

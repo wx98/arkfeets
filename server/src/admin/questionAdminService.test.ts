@@ -35,12 +35,53 @@ describe("QuestionAdminService", () => {
     expect(JSON.parse(readFileSync(join(rootDirectory, "question_data", "existing.json"), "utf8")).answers).toEqual(["新答案"]);
   });
 
+  it("invalidates parsed records after a same-size update", () => {
+    const service = createService();
+    expect(service.list().questions[0].info?.answers).toEqual(["旧答案"]);
+    service.updateQuestion("existing", { ...validInput(["新答案"]), title: "题目" });
+    expect(service.list().questions[0].info?.answers).toEqual(["新答案"]);
+  });
+
   it("creates a question only after title and crop are complete", () => {
     const service = createService();
     expect(() => service.createQuestion({ ...validInput(["答案"]), title: "", question: null })).toThrow("填写标题");
     const id = service.createQuestion({ ...validInput(["答案"]), title: "新问题", enabled: false });
     expect(id).toBe("新问题");
     expect(JSON.parse(readFileSync(join(rootDirectory, "catalogue.json"), "utf8"))).toContainEqual({ id, file: `question_data/${id}.json` });
+  });
+
+  it("rejects creating a question whose title or derived id already exists", () => {
+    const service = createService();
+    expect(() => service.createQuestion({ ...validInput(["答案"]), title: "existing", enabled: false })).toThrow("已存在相同标题的题目");
+    expect(() => service.createQuestion({ ...validInput(["答案"]), title: "题目", enabled: false })).toThrow("ID：existing");
+    service.createQuestion({ ...validInput(["答案"]), title: "新问题", enabled: false });
+    // 末尾标点被归一化去除后派生出相同 ID，同样拒绝创建
+    expect(() => service.createQuestion({ ...validInput(["答案"]), title: "新问题！", enabled: false })).toThrow("已存在相同标题的题目");
+    const deleted = service.deleteQuestion("existing");
+    expect(() => service.createQuestion({ ...validInput(["答案"]), title: "existing", enabled: false })).toThrow("已存在相同标题的题目");
+    service.permanentlyDeleteQuestion(deleted.trashId);
+  });
+
+  it("moves a question to trash and restores it without deleting its original image", () => {
+    const service = createService();
+    const deleted = service.deleteQuestion("existing");
+    expect(deleted).toMatchObject({ id: "existing" });
+    expect(JSON.parse(readFileSync(join(rootDirectory, "catalogue.json"), "utf8"))).toEqual([]);
+    expect(() => readFileSync(join(rootDirectory, "question_data", "existing.json"), "utf8")).toThrow();
+    expect(service.list().trash).toContainEqual(expect.objectContaining({ trashId: deleted.trashId, id: "existing" }));
+    expect(readFileSync(join(rootDirectory, "full_data", "existing.png"), "utf8")).toBe("image");
+    expect(readFileSync(join(rootDirectory, "full_data", "existing.json"), "utf8")).toContain("existing");
+    expect(service.restoreQuestion(deleted.trashId)).toEqual({ id: "existing" });
+    expect(service.list().questions).toHaveLength(1);
+    expect(service.list().trash).toEqual([]);
+  });
+
+  it("permanently deletes only the trashed question record", () => {
+    const service = createService();
+    const deleted = service.deleteQuestion("existing");
+    expect(service.permanentlyDeleteQuestion(deleted.trashId)).toEqual({ trashId: deleted.trashId });
+    expect(service.list().trash).toEqual([]);
+    expect(readFileSync(join(rootDirectory, "full_data", "existing.png"), "utf8")).toBe("image");
   });
 
   it("groups image statistics and metadata", () => {

@@ -2,7 +2,7 @@
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Database, Download, FilePlus2,
   FolderOpen, FolderUp, Image as ImageIcon, Images, ListTree, LogIn, LogOut, PanelLeftClose,
-  PanelLeftOpen, Plus, Save, Scissors, Search, Trash2, Upload,
+  PanelLeftOpen, Plus, RotateCcw, Save, Scissors, Search, Trash2, Upload,
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { Cropper } from "vue-advanced-cropper";
@@ -44,11 +44,18 @@ interface LibraryQuestion {
   originalImageUrl: string | null;
   validation: { valid: boolean; errors: string[] };
 }
+interface TrashedQuestion {
+  trashId: string;
+  id: string;
+  info: QuestionRecord;
+  originalImageUrl: string;
+}
 interface Library {
   validCount: number;
   invalidCount: number;
   images: LibraryImage[];
   questions: LibraryQuestion[];
+  trash?: TrashedQuestion[];
 }
 
 const difficultyOptions: Array<{ value: Difficulty; label: string }> = [
@@ -59,12 +66,13 @@ const router = useRouter();
 const token = ref(sessionStorage.getItem("arkfeets:admin-token") ?? "");
 const password = ref("");
 const library = ref<Library>();
-const mode = ref<"images" | "questions">("images");
+const mode = ref<"images" | "questions" | "trash">("images");
 const searchText = ref("");
 const sidebarCollapsed = ref(false);
 const selectedImageName = ref("");
 const expandedImageName = ref("");
 const selectedQuestionId = ref("");
+const selectedTrashId = ref("");
 const isNew = ref(false);
 const form = ref<QuestionRecord>(emptyQuestion());
 const tagText = ref("");
@@ -83,14 +91,34 @@ const questionPreviewPosition = ref({ x: 0, y: 0 });
 const busy = ref(false);
 const message = ref("");
 const error = ref("");
+// 关联原图自定义下拉：名称居左、扩展名靠右置灰，用户只能按名称选择原图。
+const imageSelectOpen = ref(false);
+const imageSelectQuery = ref("");
+const imageSelectRoot = ref<HTMLElement>();
+// 标题自动预填值：标题为空或仍等于预填值时，换图后标题跟随新图名；用户手动改过则不覆盖。
+const autoFilledTitle = ref("");
 
 const selectedImage = computed(() => library.value?.images.find((image) => image.fileName === selectedImageName.value));
 const selectedQuestion = computed(() => library.value?.questions.find((question) => question.id === selectedQuestionId.value));
+const trashedQuestions = computed(() => library.value?.trash ?? []);
+const selectedTrash = computed(() => trashedQuestions.value.find((question) => question.trashId === selectedTrashId.value));
 const currentImageUrl = computed(() => {
   if (selectedQuestionId.value || isNew.value) return library.value?.images.find((image) => image.fileName === form.value.originalImage)?.url ?? "";
   return selectedImage.value?.url ?? "";
 });
-const relatedQuestions = (image: LibraryImage) => library.value?.questions.filter((question) => image.questionIds.includes(question.id)) ?? [];
+// 题目按原图分组只计算一次，避免搜索和列表渲染中 O(原图数 × 题目数) 的重复过滤。
+const questionsByImage = computed(() => {
+  const groups = new Map<string, LibraryQuestion[]>();
+  for (const question of library.value?.questions ?? []) {
+    const name = question.info?.originalImage;
+    if (!name) continue;
+    const group = groups.get(name) ?? [];
+    group.push(question);
+    groups.set(name, group);
+  }
+  return groups;
+});
+const relatedQuestions = (image: LibraryImage) => questionsByImage.value.get(image.fileName) ?? [];
 const normalizedNeedle = computed(() => normalizeSearch(searchText.value));
 const filteredImages = computed(() => (library.value?.images ?? []).filter((image) => {
   if (!normalizedNeedle.value) return true;
@@ -108,6 +136,13 @@ const filteredQuestions = computed(() => (library.value?.questions ?? []).filter
     ...(question.info?.answers ?? []), ...(question.info?.tags ?? []),
   ].filter(Boolean).join(" ")).includes(normalizedNeedle.value);
 }));
+const filteredTrash = computed(() => trashedQuestions.value.filter((question) => {
+  if (!normalizedNeedle.value) return true;
+  return normalizeSearch([
+    question.id, question.info.title, question.info.originalImage, question.info.hint,
+    ...question.info.answers, ...question.info.tags,
+  ].join(" ")).includes(normalizedNeedle.value);
+}));
 const imagePreview = computed(() => hoveredImage.value ? {
   image: hoveredImage.value,
   style: floatingPreviewStyle(imagePreviewPosition.value, 280, 220),
@@ -120,8 +155,27 @@ const questionPreview = computed(() => {
 });
 const modeStats = computed(() => mode.value === "images"
   ? { total: library.value?.images.length ?? 0, valid: (library.value?.images ?? []).reduce((sum, image) => sum + image.validCount, 0), invalid: (library.value?.images ?? []).reduce((sum, image) => sum + image.invalidCount, 0) }
-  : { total: library.value?.questions.length ?? 0, valid: library.value?.validCount ?? 0, invalid: library.value?.invalidCount ?? 0 });
+  : mode.value === "questions"
+    ? { total: library.value?.questions.length ?? 0, valid: library.value?.validCount ?? 0, invalid: library.value?.invalidCount ?? 0 }
+    : { total: trashedQuestions.value.length, valid: trashedQuestions.value.length, invalid: 0 });
 const canSaveQuestion = computed(() => Boolean(form.value.title.trim() && form.value.question && form.value.originalImage));
+const imageSelectOptions = computed(() => {
+  const needle = normalizeSearch(imageSelectQuery.value);
+  return (library.value?.images ?? []).filter((image) => !needle || normalizeSearch(image.fileName).includes(needle));
+});
+// 与后端 deriveQuestionId 保持一致的标题查重：创建前提示，存在则不允许创建。
+const duplicateTitleId = computed(() => {
+  if (!isNew.value) return "";
+  const title = form.value.title.trim();
+  if (!title) return "";
+  const id = deriveQuestionId(title);
+  const normalizedTitle = normalizeQuestionTitle(title);
+  const duplicate = [
+    ...(library.value?.questions ?? []).map((question) => ({ id: question.id, title: question.info?.title ?? "" })),
+    ...trashedQuestions.value.map((question) => ({ id: question.id, title: question.info.title })),
+  ].find((question) => question.id === id || normalizeQuestionTitle(question.title) === normalizedTitle);
+  return duplicate?.id ?? "";
+});
 const previewStyle = computed(() => {
   const crop = form.value.question;
   if (!crop) return {};
@@ -144,9 +198,16 @@ const previewViewportStyle = computed(() => {
 });
 
 onMounted(() => {
+  window.addEventListener("click", handleGlobalClick);
   if (token.value) void loadLibrary().catch(handleError);
 });
-onBeforeUnmount(() => undefined);
+onBeforeUnmount(() => window.removeEventListener("click", handleGlobalClick));
+
+function handleGlobalClick(event: MouseEvent) {
+  if (imageSelectOpen.value && imageSelectRoot.value && !imageSelectRoot.value.contains(event.target as Node)) {
+    imageSelectOpen.value = false;
+  }
+}
 
 async function login() {
   await perform(async () => {
@@ -166,6 +227,21 @@ async function loadLibrary(preferredQuestion = selectedQuestionId.value, preferr
   }
   const image = library.value.images.find((item) => item.fileName === preferredImage) ?? library.value.images[0];
   if (image) selectImage(image);
+}
+
+function selectMode(nextMode: "images" | "questions" | "trash") {
+  mode.value = nextMode;
+  message.value = "";
+  error.value = "";
+  if (nextMode === "trash") selectedTrashId.value = trashedQuestions.value[0]?.trashId ?? "";
+  resetEditorScroll();
+}
+
+function selectTrash(question: TrashedQuestion) {
+  selectedTrashId.value = question.trashId;
+  message.value = "";
+  error.value = "";
+  resetEditorScroll();
 }
 
 function selectImage(image: LibraryImage) {
@@ -192,6 +268,8 @@ async function selectQuestion(question: LibraryQuestion) {
   selectedQuestionId.value = question.id;
   selectedImageName.value = question.info.originalImage;
   isNew.value = false;
+  autoFilledTitle.value = "";
+  imageSelectOpen.value = false;
   form.value = clone(question.info);
   if (!form.value.answers.length) form.value.answers = [""];
   tagText.value = form.value.tags.join("，");
@@ -208,12 +286,15 @@ function beginQuestion(image: LibraryImage) {
   isNew.value = true;
   form.value = {
     ...emptyQuestion(),
+    title: imageLabel(image.fileName),
     answers: image.metadata.answers.length ? [...image.metadata.answers] : [""],
     hint: image.metadata.hint,
     difficulty: [...image.metadata.difficulty],
     tags: metadataTagsToQuestionTags(image.metadata.tags),
     originalImage: image.fileName,
   };
+  autoFilledTitle.value = form.value.title;
+  imageSelectOpen.value = false;
   tagText.value = form.value.tags.join("，");
   cropConfirmed.value = false;
   isCropping.value = false;
@@ -232,6 +313,28 @@ function resetEditorScroll() {
     reset();
     requestAnimationFrame(() => requestAnimationFrame(reset));
   });
+}
+
+function toggleImageSelect() {
+  imageSelectOpen.value = !imageSelectOpen.value;
+  if (imageSelectOpen.value) imageSelectQuery.value = "";
+}
+
+function chooseQuestionImage(image: LibraryImage) {
+  if (form.value.originalImage !== image.fileName) {
+    form.value.originalImage = image.fileName;
+    // 裁切坐标只对当前原图有效，换图后必须重新框选谜面
+    form.value.question = null;
+    cropConfirmed.value = false;
+    isCropping.value = false;
+    if (!form.value.title.trim() || form.value.title === autoFilledTitle.value) {
+      form.value.title = imageLabel(image.fileName);
+      autoFilledTitle.value = form.value.title;
+    }
+    message.value = "已更换关联原图，请重新框选谜面";
+    error.value = "";
+  }
+  imageSelectOpen.value = false;
 }
 
 function restoreCrop() {
@@ -282,6 +385,7 @@ function applyCropResult(result: { coordinates: { left: number; top: number; wid
 async function saveQuestion() {
   if (!canSaveQuestion.value) { error.value = "请先填写标题并确认谜面裁切"; return; }
   if (!cropConfirmed.value) { error.value = "请先保存裁切，再保存题目"; return; }
+  if (isNew.value && duplicateTitleId.value) { error.value = `已存在相同标题的题目（ID：${duplicateTitleId.value}），请修改标题后再创建`; return; }
   await perform(async () => {
     const payload = {
       title: form.value.title.trim(),
@@ -301,6 +405,46 @@ async function saveQuestion() {
       await loadLibrary(selectedQuestionId.value, payload.originalImage);
     }
   }, form.value.enabled ? "题目已保存并启用" : "题目已保存");
+}
+
+async function deleteQuestion() {
+  if (isNew.value || !selectedQuestionId.value) return;
+  const id = selectedQuestionId.value;
+  const title = form.value.title || id;
+  if (!window.confirm(`确定将题目“${title}”移入回收站吗？\n可在回收站还原，原图不会被删除。`)) return;
+  const originalImage = form.value.originalImage;
+  await perform(async () => {
+    const result = await api<{ trashId: string }>(`/api/admin/questions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    selectedQuestionId.value = "";
+    await loadLibrary("", originalImage);
+    mode.value = "trash";
+    selectedTrashId.value = result.trashId;
+    resetEditorScroll();
+  }, "题目已移入回收站，可随时还原");
+}
+
+async function restoreQuestion() {
+  if (!selectedTrash.value) return;
+  const question = selectedTrash.value;
+  await perform(async () => {
+    const result = await api<{ id: string }>(`/api/admin/trash/${encodeURIComponent(question.trashId)}/restore`, { method: "POST" });
+    selectedTrashId.value = "";
+    mode.value = "questions";
+    await loadLibrary(result.id, question.info.originalImage);
+  }, "题目已从回收站还原");
+}
+
+async function permanentlyDeleteQuestion() {
+  if (!selectedTrash.value) return;
+  const question = selectedTrash.value;
+  if (!window.confirm(`确定彻底删除题目“${question.info.title || question.id}”吗？\n此操作无法还原，但原图仍会保留。`)) return;
+  await perform(async () => {
+    await api(`/api/admin/trash/${encodeURIComponent(question.trashId)}`, { method: "DELETE" });
+    selectedTrashId.value = "";
+    await loadLibrary("", question.info.originalImage);
+    selectedTrashId.value = trashedQuestions.value[0]?.trashId ?? "";
+    resetEditorScroll();
+  }, "题目记录已彻底删除，关联原图已保留");
 }
 
 async function saveMetadata() {
@@ -407,6 +551,12 @@ function metadataTagsToQuestionTags(tags: Array<Record<string, string>>): string
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLocaleLowerCase(); }
 function imageLabel(fileName: string) { return fileName.replace(/\.(png|jpe?g|webp|gif)$/iu, ""); }
+function imageExt(fileName: string) { return (/\.(png|jpe?g|webp|gif)$/iu.exec(fileName)?.[0] ?? "").toLowerCase(); }
+// 与后端 QuestionAdminService.deriveQuestionId 的归一化规则保持一致
+function deriveQuestionId(title: string) {
+  return title.normalize("NFKC").trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60) || "question";
+}
+function normalizeQuestionTitle(title: string) { return title.normalize("NFKC").trim().toLocaleLowerCase(); }
 
 function showImagePreview(image: LibraryImage, event: MouseEvent) {
   hoveredImage.value = image;
@@ -475,20 +625,21 @@ function questionPreviewStyle(question: LibraryQuestion) {
     <section v-else-if="library" ref="workbench" class="admin-workbench" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
       <aside class="admin-sidebar">
         <div class="admin-view-tabs">
-          <button :class="{ active: mode === 'images' }" @click="mode = 'images'"><Images :size="16" />原图</button>
-          <button :class="{ active: mode === 'questions' }" @click="mode = 'questions'"><ListTree :size="16" />题目</button>
+          <button :class="{ active: mode === 'images' }" @click="selectMode('images')"><Images :size="16" />原图</button>
+          <button :class="{ active: mode === 'questions' }" @click="selectMode('questions')"><ListTree :size="16" />题目</button>
+          <button :class="{ active: mode === 'trash' }" @click="selectMode('trash')"><Trash2 :size="16" />回收站</button>
         </div>
         <div class="admin-summary admin-summary--three">
           <span><FolderOpen :size="15" />总数 <b>{{ modeStats.total }}</b></span>
-          <span><CheckCircle2 :size="15" />有效 <b>{{ modeStats.valid }}</b></span>
-          <span><AlertTriangle :size="15" />异常 <b>{{ modeStats.invalid }}</b></span>
+          <span><CheckCircle2 :size="15" />{{ mode === 'trash' ? '可还原' : '有效' }} <b>{{ modeStats.valid }}</b></span>
+          <span><AlertTriangle :size="15" />{{ mode === 'trash' ? '损坏' : '异常' }} <b>{{ modeStats.invalid }}</b></span>
         </div>
         <div class="admin-toolbar">
           <label class="icon-button" title="上传原图或文件夹"><FolderUp :size="18" /><input v-bind="{ webkitdirectory: '' }" type="file" accept="image/*" multiple :disabled="busy" @change="uploadImages" /></label>
           <label class="icon-button" title="导入题库"><Upload :size="18" /><input type="file" accept=".zip,application/zip" :disabled="busy" @change="importArchive" /></label>
           <button class="icon-button" title="导出题库" :disabled="busy" @click="exportArchive"><Download :size="18" /></button>
         </div>
-        <div class="admin-search"><Search :size="16" /><input v-model="searchText" :placeholder="mode === 'images' ? '搜索文件、默认信息或关联题目' : '搜索标题、答案、标签或原图'" /></div>
+        <div class="admin-search"><Search :size="16" /><input v-model="searchText" :placeholder="mode === 'images' ? '搜索文件、默认信息或关联题目' : mode === 'trash' ? '搜索回收站题目、答案或原图' : '搜索标题、答案、标签或原图'" /></div>
 
         <nav v-if="mode === 'images'" class="asset-list" aria-label="原图列表">
           <div v-for="image in filteredImages" :key="image.fileName" class="asset-group" :class="{ active: selectedImageName === image.fileName }">
@@ -513,16 +664,47 @@ function questionPreviewStyle(question: LibraryQuestion) {
           <p v-if="!filteredImages.length" class="question-list__empty">没有匹配的原图</p>
         </nav>
 
-        <nav v-else class="question-list" aria-label="题目列表">
+        <nav v-else-if="mode === 'questions'" class="question-list" aria-label="题目列表">
           <button v-for="question in filteredQuestions" :key="question.id" :class="{ active: selectedQuestionId === question.id }" @click="selectQuestion(question)" @mouseenter="showQuestionPreview(question, $event)" @mousemove="moveQuestionPreview" @mouseleave="hoveredQuestion = undefined">
             <component :is="question.validation.valid ? CheckCircle2 : AlertTriangle" :size="15" />
             <span>{{ question.info?.title || question.id }}</span>
             <small>{{ question.info?.originalImage ? imageLabel(question.info.originalImage) : '未关联原图' }}</small>
           </button>
         </nav>
+
+        <nav v-else class="question-list trash-list" aria-label="回收站题目列表">
+          <button v-for="question in filteredTrash" :key="question.trashId" :class="{ active: selectedTrashId === question.trashId }" @click="selectTrash(question)">
+            <Trash2 :size="15" />
+            <span>{{ question.info.title || question.id }}</span>
+            <small>{{ imageLabel(question.info.originalImage) }}</small>
+          </button>
+          <p v-if="!filteredTrash.length" class="question-list__empty">回收站为空</p>
+        </nav>
       </aside>
 
-      <article v-if="selectedQuestionId || isNew" ref="adminEditor" class="admin-editor">
+      <article v-if="mode === 'trash' && selectedTrash" ref="adminEditor" class="admin-editor trash-editor">
+        <header>
+          <div><p class="eyebrow">RECYCLE BIN / {{ selectedTrash.id }}</p><h2>{{ selectedTrash.info.title || selectedTrash.id }}</h2></div>
+          <span class="invalid">回收站</span>
+        </header>
+        <div class="trash-question-preview">
+          <img :src="selectedTrash.originalImageUrl" :alt="selectedTrash.info.originalImage" />
+          <dl>
+            <div><dt>原图</dt><dd>{{ imageLabel(selectedTrash.info.originalImage) }}</dd></div>
+            <div><dt>答案</dt><dd>{{ selectedTrash.info.answers.join(' / ') || '未填写' }}</dd></div>
+            <div><dt>状态</dt><dd>{{ selectedTrash.info.enabled ? '删除前已启用' : '删除前未启用' }}</dd></div>
+          </dl>
+        </div>
+        <section class="trash-actions">
+          <div><strong>选择处理方式</strong><small>还原后重新进入题库；彻底删除后无法恢复，原图仍会保留。</small></div>
+          <button class="button button--quiet" :disabled="busy" @click="restoreQuestion"><RotateCcw :size="17" />还原题目</button>
+          <button class="button button--danger" :disabled="busy" @click="permanentlyDeleteQuestion"><Trash2 :size="17" />彻底删除</button>
+        </section>
+        <p v-if="message" class="admin-message">{{ message }}</p>
+        <p v-if="error" class="error-text">{{ error }}</p>
+      </article>
+
+      <article v-else-if="mode !== 'trash' && (selectedQuestionId || isNew)" ref="adminEditor" class="admin-editor">
         <header>
           <div><p class="eyebrow">QUESTION RECORD / {{ isNew ? 'NEW' : selectedQuestionId }}</p><h2>{{ form.title || '未命名题目' }}</h2></div>
           <span :class="selectedQuestion?.validation.valid ? 'valid' : 'invalid'">{{ isNew ? '未提交' : selectedQuestion?.validation.valid ? '校验通过' : '待修正' }}</span>
@@ -535,22 +717,45 @@ function questionPreviewStyle(question: LibraryQuestion) {
             <figure><figcaption>谜底 · 完整原图</figcaption><img :src="currentImageUrl" alt="完整原图" /></figure>
             <figure><figcaption>谜面 · 实时裁切</figcaption><div class="crop-preview-frame"><div v-if="form.question" class="crop-preview" :style="previewViewportStyle"><img :src="currentImageUrl" :style="previewStyle" alt="谜面预览" /></div><div v-else class="crop-preview--empty">尚未确认裁切</div></div></figure>
           </div>
-          <div class="crop-ratios">
-            <button :class="{ active: cropAspect === 16 / 9 }" :disabled="!isCropping" @click="cropAspect = 16 / 9">16:9</button>
-            <button :class="{ active: cropAspect === 1 }" :disabled="!isCropping" @click="cropAspect = 1">1:1</button>
-            <button :class="{ active: !cropAspect }" :disabled="!isCropping" @click="cropAspect = undefined">自由</button>
+          <div class="crop-toolbar">
+            <button class="button crop-confirm" :class="{ 'button--primary': isCropping }" :disabled="busy" @click="toggleCropEditing">
+              <component :is="isCropping ? Save : Scissors" :size="16" />{{ isCropping ? '保存裁切' : '裁剪' }}
+            </button>
+            <div class="crop-ratios">
+              <button :class="{ active: cropAspect === 16 / 9 }" :disabled="!isCropping" @click="cropAspect = 16 / 9">16:9</button>
+              <button :class="{ active: cropAspect === 1 }" :disabled="!isCropping" @click="cropAspect = 1">1:1</button>
+              <button :class="{ active: !cropAspect }" :disabled="!isCropping" @click="cropAspect = undefined">自由</button>
+            </div>
           </div>
           <Cropper v-if="currentImageUrl" ref="cropper" class="question-cropper" :class="{ 'is-locked': !isCropping }" :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }" image-restriction="stencil" @ready="restoreCrop" @change="handleCropChange" />
-          <button class="button crop-confirm" :class="{ 'button--primary': isCropping }" :disabled="busy" @click="toggleCropEditing">
-            <component :is="isCropping ? Save : Scissors" :size="18" />{{ isCropping ? '保存裁切' : '裁剪' }}
-          </button>
         </section>
 
         <section class="admin-form-section">
           <div class="admin-section-title"><span>02</span><div><strong>题目信息</strong><small>QUESTION DATA</small></div></div>
           <div class="admin-form-grid">
             <label class="wide">标题<input v-model="form.title" maxlength="100" placeholder="必填，输入题目标题" /></label>
-            <label class="wide">关联原图<input :value="form.originalImage" disabled /></label>
+            <p v-if="duplicateTitleId" class="field-error wide">已存在相同标题的题目（ID：{{ duplicateTitleId }}），请修改标题后再创建</p>
+            <div class="wide image-select-field">
+              <span>关联原图</span>
+              <div ref="imageSelectRoot" class="image-select">
+                <button type="button" class="image-select__current" :disabled="busy" @click.stop="toggleImageSelect">
+                  <ImageIcon :size="15" />
+                  <span class="image-select__name">{{ form.originalImage ? imageLabel(form.originalImage) : '请选择原图' }}</span>
+                  <span class="image-select__ext">{{ imageExt(form.originalImage) }}</span>
+                  <ChevronDown :size="15" :class="{ open: imageSelectOpen }" />
+                </button>
+                <div v-if="imageSelectOpen" class="image-select__panel" @click.stop>
+                  <div class="image-select__search"><Search :size="14" /><input v-model="imageSelectQuery" placeholder="搜索原图名称" /></div>
+                  <div class="image-select__options">
+                    <button v-for="image in imageSelectOptions" :key="image.fileName" type="button" :class="{ active: form.originalImage === image.fileName }" @click="chooseQuestionImage(image)">
+                      <span class="image-select__name">{{ imageLabel(image.fileName) }}</span>
+                      <span class="image-select__ext">{{ imageExt(image.fileName) }}</span>
+                    </button>
+                    <p v-if="!imageSelectOptions.length">没有匹配的原图</p>
+                  </div>
+                </div>
+              </div>
+            </div>
             <label class="wide">提示<textarea v-model="form.hint" maxlength="300" rows="2" placeholder="可选提示" /></label>
             <div class="wide answer-fields">
               <div class="field-heading"><span>正确答案与别名</span><button class="icon-button" title="增加别名" @click="addAnswer(form)"><Plus :size="15" /></button></div>
@@ -566,13 +771,16 @@ function questionPreviewStyle(question: LibraryQuestion) {
 
         <section class="admin-publish">
           <label class="publish-toggle"><input v-model="form.enabled" type="checkbox" /><span class="publish-switch" /><span class="publish-copy"><strong>允许进入游戏题库</strong><small>启用时答案和裁切必须完整</small></span></label>
-          <button class="button button--primary" :disabled="busy || !canSaveQuestion || !cropConfirmed" @click="saveQuestion"><Save :size="17" />{{ isNew ? '创建题目' : '保存题目' }}</button>
+          <div class="admin-publish-actions">
+            <button v-if="!isNew" class="button button--danger" :disabled="busy" @click="deleteQuestion"><Trash2 :size="17" />移入回收站</button>
+            <button class="button button--primary" :disabled="busy || !canSaveQuestion || !cropConfirmed || !!duplicateTitleId" @click="saveQuestion"><Save :size="17" />{{ isNew ? '创建题目' : '保存题目' }}</button>
+          </div>
         </section>
         <p v-if="message" class="admin-message">{{ message }}</p>
         <p v-if="error" class="error-text">{{ error }}</p>
       </article>
 
-      <article v-else-if="selectedImage" ref="adminEditor" class="admin-editor asset-editor">
+      <article v-else-if="mode === 'images' && selectedImage" ref="adminEditor" class="admin-editor asset-editor">
         <header><div><p class="eyebrow">SOURCE IMAGE / FULL DATA</p><h2>{{ selectedImage.fileName }}</h2></div><button class="button button--primary" @click="beginQuestion(selectedImage)"><FilePlus2 :size="17" />新增题目</button></header>
         <div class="asset-overview">
           <img :src="selectedImage.url" :alt="selectedImage.fileName" />
@@ -602,6 +810,12 @@ function questionPreviewStyle(question: LibraryQuestion) {
         </section>
         <p v-if="message" class="admin-message">{{ message }}</p>
         <p v-if="error" class="error-text">{{ error }}</p>
+      </article>
+
+      <article v-else-if="mode === 'trash'" class="admin-empty" ref="adminEditor">
+        <Trash2 :size="42" />
+        <h2>回收站为空</h2>
+        <p>移入回收站的题目会显示在这里，可随时还原或彻底删除。</p>
       </article>
 
       <article v-else class="admin-empty"><Database :size="42" /><h2>题库为空</h2><p>上传原图后即可开始创建题目。</p></article>

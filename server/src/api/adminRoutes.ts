@@ -45,6 +45,9 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
     }
   });
   router.put("/questions/:id", (request, response) => run(response, () => questions.updateQuestion(String(request.params.id), request.body)));
+  router.delete("/questions/:id", (request, response) => run(response, () => questions.deleteQuestion(String(request.params.id))));
+  router.post("/trash/:trashId/restore", (request, response) => run(response, () => questions.restoreQuestion(String(request.params.trashId))));
+  router.delete("/trash/:trashId", (request, response) => run(response, () => questions.permanentlyDeleteQuestion(String(request.params.trashId))));
   router.post("/images", upload.single("image"), (request, response) => run(response, () => {
     if (!request.file) throw new Error("请选择图片文件");
     return questions.addImages([request.file]);

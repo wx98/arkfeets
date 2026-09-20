@@ -1,13 +1,20 @@
 import { Router, type RequestHandler } from "express";
+import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import multer from "multer";
 import { z } from "zod";
 import type { AdminSessionManager } from "../admin/adminSessionManager.js";
 import type { QuestionAdminService } from "../admin/questionAdminService.js";
 
 const loginSchema = z.object({ password: z.string().min(1).max(200) }).strict();
+const importDirectory = join(tmpdir(), "arkfeets-imports");
+mkdirSync(importDirectory, { recursive: true });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
-const zipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024, files: 1 } });
+const zipUpload = multer({ dest: importDirectory, limits: { fileSize: 8 * 1024 * 1024 * 1024, files: 1 } });
 const batchUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 200 } });
+const exportProgress = new Map<string, { written: number; total: number; done: boolean; error?: string }>();
 
 export function createAdminRoutes(sessions: AdminSessionManager, questions: QuestionAdminService): Router {
   const router = Router();
@@ -34,35 +41,62 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
   router.get("/library", (_request, response) => run(response, () => questions.list()));
   router.get("/questions", (_request, response) => run(response, () => questions.list()));
   router.post("/questions", (request, response) => run(response, () => ({ id: questions.createQuestion(request.body) })));
-  router.get("/questions/export", (_request, response) => {
+  router.get("/questions/export-progress/:jobId", (request, response) => {
+    const progress = exportProgress.get(String(request.params.jobId));
+    if (!progress) {
+      response.status(404).json({ message: "导出任务尚未开始或已结束" });
+      return;
+    }
+    response.json(progress);
+  });
+  router.get("/questions/export", async (request, response) => {
+    const jobId = typeof request.query.jobId === "string" && /^[a-zA-Z0-9_-]{8,80}$/.test(request.query.jobId) ? request.query.jobId : "";
+    let progress: { written: number; total: number; done: boolean; error?: string } | undefined;
     try {
-      const archive = questions.exportZip();
+      const archive = questions.createExport();
+      if (jobId) {
+        progress = { written: 0, total: archive.sourceBytes, done: false };
+        exportProgress.set(jobId, progress);
+      }
       response.setHeader("Content-Type", "application/zip");
       response.setHeader("Content-Disposition", `attachment; filename="arkfeets-questions-${new Date().toISOString().slice(0, 10)}.zip"`);
-      response.send(archive);
+      response.setHeader("X-Archive-Source-Bytes", archive.sourceBytes);
+      await archive.writeTo(response, (written) => { if (progress) progress.written = written; });
+      if (progress) progress.done = true;
     } catch (error) {
-      response.status(400).json({ message: error instanceof Error ? error.message : "导出失败" });
+      if (progress) {
+        progress.done = true;
+        progress.error = error instanceof Error ? error.message : "导出失败";
+      }
+      if (response.headersSent) response.destroy(error instanceof Error ? error : undefined);
+      else response.status(400).json({ message: error instanceof Error ? error.message : "导出失败" });
+    } finally {
+      if (jobId) setTimeout(() => exportProgress.delete(jobId), 5 * 60 * 1000).unref();
     }
   });
   router.put("/questions/:id", (request, response) => run(response, () => questions.updateQuestion(String(request.params.id), request.body)));
   router.delete("/questions/:id", (request, response) => run(response, () => questions.deleteQuestion(String(request.params.id))));
   router.post("/trash/:trashId/restore", (request, response) => run(response, () => questions.restoreQuestion(String(request.params.trashId))));
   router.delete("/trash/:trashId", (request, response) => run(response, () => questions.permanentlyDeleteQuestion(String(request.params.trashId))));
-  router.post("/images", upload.single("image"), (request, response) => run(response, () => {
+  router.post("/images", upload.single("image"), (request, response) => runAsync(response, async () => {
     if (!request.file) throw new Error("请选择图片文件");
-    return questions.addImages([request.file]);
+    return await questions.addImages([request.file]);
   }));
   router.put("/images/:fileName/metadata", (request, response) => run(response, () => questions.updateImageMetadata(String(request.params.fileName), request.body)));
-  router.post("/questions/import-zip", zipUpload.single("archive"), (request, response) => run(response, () => {
+  router.post("/questions/import-zip", zipUpload.single("archive"), (request, response) => runAsync(response, async () => {
     if (!request.file || !request.file.originalname.toLowerCase().endsWith(".zip")) throw new Error("请选择 ZIP 资源包");
-    return questions.importZip(request.file.buffer);
+    try {
+      return await questions.importZip(request.file.path);
+    } finally {
+      await rm(request.file.path, { force: true });
+    }
   }));
-  router.post("/questions/batch-images", batchUpload.array("images", 200), (request, response) => run(response, () => {
+  router.post("/questions/batch-images", batchUpload.array("images", 200), (request, response) => runAsync(response, async () => {
     const files = request.files as Express.Multer.File[] | undefined;
     const paths = z.array(z.string().max(500)).parse(JSON.parse(String(request.body.paths ?? "[]")));
     if (!files || files.length !== paths.length) throw new Error("批量图片与路径信息不匹配");
     const namedFiles = files.map((file, index) => ({ ...file, originalname: paths[index].split(/[\\/]/u).at(-1) || file.originalname }));
-    return questions.addImages(namedFiles);
+    return await questions.addImages(namedFiles);
   }));
   return router;
 }
@@ -85,6 +119,15 @@ function readAdminToken(authorization: string | undefined, cookieHeader: string 
 function run(response: import("express").Response, action: () => unknown): void {
   try {
     response.json(action());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "请求失败";
+    response.status(message.includes("密码") ? 401 : 400).json({ message });
+  }
+}
+
+async function runAsync(response: import("express").Response, action: () => Promise<unknown>): Promise<void> {
+  try {
+    response.json(await action());
   } catch (error) {
     const message = error instanceof Error ? error.message : "请求失败";
     response.status(message.includes("密码") ? 401 : 400).json({ message });

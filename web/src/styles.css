@@ -211,8 +211,20 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
 .admin-summary span:first-child svg { color: var(--signal); }
 .admin-summary span:last-child svg { color: #ff9f43; }
 .admin-summary b { grid-column: 1 / -1; font-size: 21px; color: #fff; }
-.admin-toolbar { display: grid; grid-template-columns: repeat(4,1fr); gap: 5px; margin-bottom: 10px; }
+.admin-toolbar { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; margin-bottom: 10px; }
 .admin-toolbar .icon-button { width: 100%; min-width: 0; border-color: #575c5d; background: #2a2d30; }
+.admin-transfer-progress { display: grid; gap: 7px; margin: -2px 0 10px; padding: 9px 10px; color: #d9dddc; border: 1px solid #555a5b; background: #292c2f; }
+.admin-transfer-progress > div { min-width: 0; display: flex; align-items: center; gap: 7px; font-size: 10px; }
+.admin-transfer-progress > div span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-transfer-progress b { color: var(--signal); font-size: 10px; }
+.admin-transfer-progress progress, .admin-transfer-progress__indeterminate { width: 100%; height: 4px; display: block; overflow: hidden; border: 0; background: #4a4e50; }
+.admin-transfer-progress progress::-webkit-progress-bar { background: #4a4e50; }
+.admin-transfer-progress progress::-webkit-progress-value { background: var(--signal); }
+.admin-transfer-progress progress::-moz-progress-bar { background: var(--signal); }
+.admin-transfer-progress__indeterminate i { width: 35%; height: 100%; display: block; background: var(--signal); animation: transfer-slide 1s ease-in-out infinite; }
+.is-spinning { animation: transfer-spin .8s linear infinite; }
+@keyframes transfer-spin { to { transform: rotate(360deg); } }
+@keyframes transfer-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(390%); } }
 .admin-toolbar input, .crop-toolbar input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .admin-create { display: grid; grid-template-columns: 1fr 42px 42px; gap: 5px; margin-bottom: 10px; }
 .admin-create input { height: 42px; }

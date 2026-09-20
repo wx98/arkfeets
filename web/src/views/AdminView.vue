@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Database, Download, FilePlus2,
-  FolderOpen, FolderUp, Image as ImageIcon, Images, ListTree, LogIn, LogOut, PanelLeftClose,
+  FolderOpen, FolderUp, Image as ImageIcon, Images, ListTree, LoaderCircle, LogIn, LogOut, PanelLeftClose,
   PanelLeftOpen, Plus, RotateCcw, Save, Scissors, Search, Trash2, Upload,
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
@@ -91,6 +91,8 @@ const questionPreviewPosition = ref({ x: 0, y: 0 });
 const busy = ref(false);
 const message = ref("");
 const error = ref("");
+const transferLabel = ref("");
+const transferProgress = ref<number | null>(null);
 // 关联原图自定义下拉：名称居左、扩展名靠右置灰，用户只能按名称选择原图。
 const imageSelectOpen = ref(false);
 const imageSelectQuery = ref("");
@@ -475,36 +477,117 @@ async function uploadImages(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = [...(input.files ?? [])].filter((file) => file.type.startsWith("image/"));
   if (!files.length) return;
-  await perform(async () => {
-    const data = new FormData();
-    data.append("paths", JSON.stringify(files.map((file) => file.webkitRelativePath || file.name)));
-    for (const file of files) data.append("images", file);
-    const result = await api<{ added: string[]; conflicts: string[] }>("/api/admin/questions/batch-images", { method: "POST", body: data });
-    await loadLibrary("", result.added[0]);
-    input.value = "";
-    message.value = `新增 ${result.added.length} 张原图，跳过 ${result.conflicts.length} 个同名文件`;
-  });
+  transferLabel.value = `正在上传 0 / ${files.length} 张原图`;
+  transferProgress.value = 0;
+  try {
+    await perform(async () => {
+      const added: string[] = [];
+      const conflicts: string[] = [];
+      const batchSize = 100;
+      for (let offset = 0; offset < files.length; offset += batchSize) {
+        const batch = files.slice(offset, offset + batchSize);
+        const data = new FormData();
+        data.append("paths", JSON.stringify(batch.map((file) => file.webkitRelativePath || file.name)));
+        for (const file of batch) data.append("images", file);
+        transferLabel.value = `正在上传 ${offset} / ${files.length} 张原图`;
+        const result = await uploadForm<{ added: string[]; conflicts: string[] }>("/api/admin/questions/batch-images", data, (progress) => {
+          transferProgress.value = Math.min(100, ((offset + progress * batch.length) / files.length) * 100);
+          transferLabel.value = `正在上传 ${Math.min(files.length, Math.round(offset + progress * batch.length))} / ${files.length} 张原图`;
+        });
+        added.push(...result.added);
+        conflicts.push(...result.conflicts);
+      }
+      transferLabel.value = "正在刷新题库";
+      transferProgress.value = null;
+      await loadLibrary("", added[0]);
+      input.value = "";
+      message.value = `新增 ${added.length} 张原图，跳过 ${conflicts.length} 个同名文件`;
+    });
+  } finally {
+    transferLabel.value = "";
+    transferProgress.value = null;
+  }
 }
 
 async function importArchive(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
-  await perform(async () => {
-    const data = new FormData();
-    data.append("archive", file);
-    const result = await api<{ importedIds: string[]; conflicts: string[] }>("/api/admin/questions/import-zip", { method: "POST", body: data });
-    await loadLibrary(result.importedIds[0]);
-    input.value = "";
-    message.value = `导入 ${result.importedIds.length} 题，保留 ${result.conflicts.length} 个重复 ID`;
-  });
+  transferLabel.value = "正在上传题库资源包";
+  transferProgress.value = 0;
+  try {
+    await perform(async () => {
+      const data = new FormData();
+      data.append("archive", file);
+      const result = await uploadForm<{ importedIds: string[]; conflicts: string[] }>("/api/admin/questions/import-zip", data, (progress) => {
+        transferProgress.value = progress < 1 ? progress * 100 : null;
+        transferLabel.value = progress < 1 ? "正在上传题库资源包" : "正在校验并合并题库";
+      });
+      transferLabel.value = "正在刷新题库";
+      transferProgress.value = null;
+      await loadLibrary(result.importedIds[0]);
+      input.value = "";
+      message.value = `导入 ${result.importedIds.length} 题，保留 ${result.conflicts.length} 个重复 ID`;
+    });
+  } finally {
+    transferLabel.value = "";
+    transferProgress.value = null;
+  }
 }
 
-function exportArchive() {
-  const link = document.createElement("a");
-  link.href = "/api/admin/questions/export";
-  link.click();
-  message.value = "整库资源包已开始导出";
+async function exportArchive() {
+  transferLabel.value = "正在生成题库资源包";
+  transferProgress.value = null;
+  try {
+    await perform(async () => {
+      const picker = (window as unknown as {
+        showSaveFilePicker?: (options: {
+          suggestedName: string;
+          types: Array<{ description: string; accept: Record<string, string[]> }>;
+        }) => Promise<{ createWritable: () => Promise<{ write: (data: Uint8Array) => Promise<void>; close: () => Promise<void>; abort?: () => Promise<void> }> }>;
+      }).showSaveFilePicker;
+      if (!picker) {
+        const jobId = crypto.randomUUID().replaceAll("-", "");
+        const link = document.createElement("a");
+        link.href = `/api/admin/questions/export?jobId=${jobId}`;
+        link.download = `arkfeets-questions-${new Date().toISOString().slice(0, 10)}.zip`;
+        link.click();
+        transferLabel.value = "正在导出题库资源包";
+        await watchExportProgress(jobId);
+        return;
+      }
+      const handle = await picker.call(window, {
+        suggestedName: `arkfeets-questions-${new Date().toISOString().slice(0, 10)}.zip`,
+        types: [{ description: "ZIP 资源包", accept: { "application/zip": [".zip"] } }],
+      });
+      const destination = await handle.createWritable();
+      const response = await fetch("/api/admin/questions/export", { headers: { Authorization: `Bearer ${token.value}` } });
+      if (!response.ok) {
+        await destination.abort?.();
+        throw new Error(await readResponseError(response));
+      }
+      transferLabel.value = "正在下载题库资源包";
+      const total = Number(response.headers.get("X-Archive-Source-Bytes") ?? 0);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        await destination.abort?.();
+        throw new Error("浏览器不支持流式下载");
+      }
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await destination.write(value);
+        loaded += value.byteLength;
+        transferProgress.value = total ? Math.min(100, loaded / total * 100) : null;
+      }
+      await destination.close();
+      transferProgress.value = 100;
+    }, "整库资源包已导出");
+  } finally {
+    transferLabel.value = "";
+    transferProgress.value = null;
+  }
 }
 
 async function logout() {
@@ -534,6 +617,48 @@ async function api<T = unknown>(url: string, init: RequestInit = {}, authenticat
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message ?? `请求失败 (${response.status})`);
   return body as T;
+}
+
+function uploadForm<T>(url: string, data: FormData, onProgress: (progress: number) => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    if (token.value) request.setRequestHeader("Authorization", `Bearer ${token.value}`);
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    });
+    request.addEventListener("load", () => {
+      const body = JSON.parse(request.responseText || "{}") as T & { message?: string };
+      if (request.status >= 200 && request.status < 300) resolve(body);
+      else reject(new Error(body.message ?? `请求失败 (${request.status})`));
+    });
+    request.addEventListener("error", () => reject(new Error("网络连接失败")));
+    request.send(data);
+  });
+}
+
+async function readResponseError(response: Response): Promise<string> {
+  const body = await response.json().catch(() => ({})) as { message?: string };
+  return body.message ?? `请求失败 (${response.status})`;
+}
+
+async function watchExportProgress(jobId: string): Promise<void> {
+  for (let attempt = 0; attempt < 7_200; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const response = await fetch(`/api/admin/questions/export-progress/${jobId}`, {
+      headers: { Authorization: `Bearer ${token.value}` },
+    });
+    if (response.status === 404) continue;
+    if (!response.ok) throw new Error(await readResponseError(response));
+    const progress = await response.json() as { written: number; total: number; done: boolean; error?: string };
+    transferProgress.value = progress.total ? Math.min(100, progress.written / progress.total * 100) : null;
+    if (progress.error) throw new Error(progress.error);
+    if (progress.done) {
+      transferProgress.value = 100;
+      return;
+    }
+  }
+  throw new Error("导出任务等待超时");
 }
 
 function emptyMetadata(): ImageMetadata {
@@ -638,6 +763,11 @@ function questionPreviewStyle(question: LibraryQuestion) {
           <label class="icon-button" title="上传原图或文件夹"><FolderUp :size="18" /><input v-bind="{ webkitdirectory: '' }" type="file" accept="image/*" multiple :disabled="busy" @change="uploadImages" /></label>
           <label class="icon-button" title="导入题库"><Upload :size="18" /><input type="file" accept=".zip,application/zip" :disabled="busy" @change="importArchive" /></label>
           <button class="icon-button" title="导出题库" :disabled="busy" @click="exportArchive"><Download :size="18" /></button>
+        </div>
+        <div v-if="transferLabel" class="admin-transfer-progress" role="status" aria-live="polite">
+          <div><LoaderCircle :size="14" class="is-spinning" /><span>{{ transferLabel }}</span><b v-if="transferProgress !== null">{{ Math.round(transferProgress) }}%</b></div>
+          <progress v-if="transferProgress !== null" :value="transferProgress" max="100" />
+          <span v-else class="admin-transfer-progress__indeterminate"><i /></span>
         </div>
         <div class="admin-search"><Search :size="16" /><input v-model="searchText" :placeholder="mode === 'images' ? '搜索文件、默认信息或关联题目' : mode === 'trash' ? '搜索回收站题目、答案或原图' : '搜索标题、答案、标签或原图'" /></div>
 

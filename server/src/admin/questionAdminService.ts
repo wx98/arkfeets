@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { basename, extname, join, posix, resolve, sep } from "node:path";
+import type { Writable } from "node:stream";
 import AdmZip from "adm-zip";
 import { z } from "zod";
 import {
@@ -12,8 +14,11 @@ import {
   type QuestionRepository,
 } from "../question/questionRepository.js";
 import { difficulties } from "../question/types.js";
+import { StreamingZipReader } from "./streamingZipReader.js";
+import { storedZipSourceSize, writeStoredZip, type StoredZipEntry } from "./streamingZipWriter.js";
 
 type UploadedImage = { buffer: Buffer; mimetype: string; originalname: string };
+type ImportZipEntry = { read: () => Promise<Buffer>; writeTo: (targetPath: string) => Promise<void> };
 const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const imageMimeExtensions = new Map([
   ["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/webp", ".webp"], ["image/gif", ".gif"],
@@ -187,27 +192,36 @@ export class QuestionAdminService {
     return { trashId };
   }
 
-  addImages(files: UploadedImage[]): { added: string[]; conflicts: string[] } {
+  async addImages(files: UploadedImage[]): Promise<{ added: string[]; conflicts: string[] }> {
     const added: string[] = [];
     const conflicts: string[] = [];
+    const accepted: Array<{ file: UploadedImage; fileName: string; stem: string }> = [];
+    const reserved = new Set<string>();
     for (const file of files) {
       const extension = this.imageExtension(file);
       const stem = basename(file.originalname, extname(file.originalname)).replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-|-$/g, "") || "image";
       const fileName = `${stem}${extension}`;
-      if (existsSync(this.imagePath(fileName))) {
+      if (existsSync(this.imagePath(fileName)) || reserved.has(fileName)) {
         conflicts.push(fileName);
         continue;
       }
-      writeFileSync(this.imagePath(fileName), file.buffer);
-      this.writeJsonAtomic(this.metadataPath(fileName), {
+      reserved.add(fileName);
+      accepted.push({ file, fileName, stem });
+      added.push(fileName);
+    }
+    await mapConcurrent(accepted, 16, async ({ file, fileName, stem }) => {
+      const metadata = {
         name: stem,
         answers: [],
         hint: "",
         difficulty: [...difficulties],
         tags: [],
-      });
-      added.push(fileName);
-    }
+      };
+      await Promise.all([
+        writeFile(this.imagePath(fileName), file.buffer),
+        writeFile(this.metadataPath(fileName), `${JSON.stringify(metadata, null, 2)}\n`, "utf8"),
+      ]);
+    });
     this.listCache = null;
     return { added, conflicts };
   }
@@ -220,61 +234,91 @@ export class QuestionAdminService {
     return metadata;
   }
 
-  exportZip(): Buffer {
-    const zip = new AdmZip();
-    zip.addFile("catalogue.json", Buffer.from(`${JSON.stringify(this.readCatalogue(), null, 2)}\n`));
-    for (const entry of this.readCatalogue()) {
+  createExport(): { sourceBytes: number; writeTo: (output: Writable, onProgress?: (writtenSourceBytes: number) => void) => Promise<void> } {
+    const catalogue = this.readCatalogue();
+    const entries: StoredZipEntry[] = [
+      { archivePath: "catalogue.json", data: Buffer.from(`${JSON.stringify(catalogue, null, 2)}\n`) },
+    ];
+    for (const entry of catalogue) {
       const path = this.questionPath(entry.id);
-      if (existsSync(path)) zip.addFile(entry.file, readFileSync(path));
+      if (existsSync(path)) entries.push({ archivePath: entry.file, sourcePath: path });
     }
     for (const entry of readdirSync(this.fullDataDirectory, { withFileTypes: true })) {
       if (entry.isFile() && (imageExtensions.has(extname(entry.name).toLowerCase()) || extname(entry.name).toLowerCase() === ".json")) {
-        zip.addFile(`full_data/${entry.name}`, readFileSync(join(this.fullDataDirectory, entry.name)));
+        entries.push({ archivePath: `full_data/${entry.name}`, sourcePath: join(this.fullDataDirectory, entry.name) });
       }
     }
-    return zip.toBuffer();
+    return {
+      sourceBytes: storedZipSourceSize(entries),
+      writeTo: (output, onProgress) => writeStoredZip(output, entries, onProgress),
+    };
   }
 
-  importZip(buffer: Buffer) {
-    const zip = new AdmZip(buffer);
-    const files = new Map<string, Buffer>();
-    for (const entry of zip.getEntries()) {
-      const archivePath = validateArchivePath(entry.entryName);
-      if (!entry.isDirectory) files.set(archivePath, entry.getData());
-    }
-    const cataloguePaths = [...files.keys()].filter((path) => path === "catalogue.json" || path.endsWith("/catalogue.json"));
-    if (cataloguePaths.length !== 1) throw new Error("资源包中必须且只能包含一个 catalogue.json");
-    const cataloguePath = cataloguePaths[0];
-    const prefix = cataloguePath.slice(0, -"catalogue.json".length);
-    const importedCatalogue = catalogueSchema.parse(JSON.parse(files.get(cataloguePath)!.toString("utf8")));
-    const current = this.readCatalogue();
-    const currentIds = new Set(current.map((entry) => entry.id));
-    const conflicts: string[] = [];
-    const imported: Array<{ entry: CatalogueEntry; record: QuestionRecord }> = [];
-    for (const entry of importedCatalogue) {
-      if (currentIds.has(entry.id)) {
-        conflicts.push(entry.id);
-        continue;
+  async importZip(input: Buffer | string) {
+    const streamingReader = typeof input === "string" ? await StreamingZipReader.open(input) : null;
+    try {
+      const files = new Map<string, ImportZipEntry>();
+      if (streamingReader) {
+        for (const entry of streamingReader.entries) {
+          const archivePath = validateArchivePath(entry.entryName);
+          if (!entry.isDirectory) {
+            files.set(archivePath, {
+              read: () => streamingReader.readEntry(entry),
+              writeTo: (targetPath) => streamingReader.writeEntry(entry, targetPath),
+            });
+          }
+        }
+      } else {
+        const zip = new AdmZip(input as Buffer, { readEntries: true });
+        for (const entry of zip.getEntries()) {
+          const archivePath = validateArchivePath(entry.entryName);
+          if (!entry.isDirectory) {
+            files.set(archivePath, {
+              read: () => readZipEntry(entry),
+              writeTo: async (targetPath) => writeFile(targetPath, await readZipEntry(entry)),
+            });
+          }
+        }
       }
-      const recordBuffer = files.get(`${prefix}${entry.file}`);
-      if (!recordBuffer) throw new Error(`题目 ${entry.id} 缺少记录文件`);
-      const record = questionRecordSchema.parse(JSON.parse(recordBuffer.toString("utf8")));
-      if (record.id !== entry.id) throw new Error(`题目 ${entry.id} 的记录 ID 不一致`);
-      const imageData = files.get(`${prefix}full_data/${record.originalImage}`);
-      if (!imageData && !existsSync(this.imagePath(record.originalImage))) throw new Error(`题目 ${entry.id} 缺少原图 ${record.originalImage}`);
-      imported.push({ entry: { id: entry.id, file: `question_data/${entry.id}.json` }, record });
+      const cataloguePaths = [...files.keys()].filter((path) => path === "catalogue.json" || path.endsWith("/catalogue.json"));
+      if (cataloguePaths.length !== 1) throw new Error("资源包中必须且只能包含一个 catalogue.json");
+      const cataloguePath = cataloguePaths[0];
+      const prefix = cataloguePath.slice(0, -"catalogue.json".length);
+      const importedCatalogue = catalogueSchema.parse(JSON.parse((await files.get(cataloguePath)!.read()).toString("utf8")));
+      const current = this.readCatalogue();
+      const currentIds = new Set(current.map((entry) => entry.id));
+      const conflicts: string[] = [];
+      const imported: Array<{ entry: CatalogueEntry; record: QuestionRecord }> = [];
+      for (const entry of importedCatalogue) {
+        if (currentIds.has(entry.id)) {
+          conflicts.push(entry.id);
+          continue;
+        }
+        const recordEntry = files.get(`${prefix}${entry.file}`);
+        if (!recordEntry) throw new Error(`题目 ${entry.id} 缺少记录文件`);
+        const record = questionRecordSchema.parse(JSON.parse((await recordEntry.read()).toString("utf8")));
+        if (record.id !== entry.id) throw new Error(`题目 ${entry.id} 的记录 ID 不一致`);
+        const imageEntry = files.get(`${prefix}full_data/${record.originalImage}`);
+        if (!imageEntry && !existsSync(this.imagePath(record.originalImage))) throw new Error(`题目 ${entry.id} 缺少原图 ${record.originalImage}`);
+        imported.push({ entry: { id: entry.id, file: `question_data/${entry.id}.json` }, record });
+      }
+      const imageEntries: Array<{ target: string; entry: ImportZipEntry }> = [];
+      for (const [path, entry] of files) {
+        if (!path.startsWith(`${prefix}full_data/`)) continue;
+        const name = path.slice(`${prefix}full_data/`.length);
+        if (!name || name !== basename(name) || (!imageExtensions.has(extname(name).toLowerCase()) && extname(name).toLowerCase() !== ".json")) continue;
+        const target = join(this.fullDataDirectory, name);
+        if (!existsSync(target)) imageEntries.push({ target, entry });
+      }
+      await mapConcurrent(imageEntries, 4, async ({ target, entry }) => entry.writeTo(target));
+      for (const item of imported) this.writeJsonAtomic(this.questionPath(item.entry.id), item.record);
+      this.writeCatalogue([...current, ...imported.map((item) => item.entry)]);
+      this.listCache = null;
+      this.repository.reload();
+      return { importedIds: imported.map((item) => item.entry.id), conflicts, report: this.repository.getValidationReport() };
+    } finally {
+      await streamingReader?.close();
     }
-    for (const [path, data] of files) {
-      if (!path.startsWith(`${prefix}full_data/`)) continue;
-      const name = path.slice(`${prefix}full_data/`.length);
-      if (!name || name !== basename(name) || (!imageExtensions.has(extname(name).toLowerCase()) && extname(name).toLowerCase() !== ".json")) continue;
-      if (!existsSync(join(this.fullDataDirectory, name))) writeFileSync(join(this.fullDataDirectory, name), data);
-    }
-    for (const item of imported) this.writeJsonAtomic(this.questionPath(item.entry.id), item.record);
-    this.writeCatalogue([...current, ...imported.map((item) => item.entry)]);
-    this.listCache = null;
-    this.repository.reload();
-    return { importedIds: imported.map((item) => item.entry.id), conflicts, report: this.repository.getValidationReport() };
   }
 
   // 资源代际：catalogue 文件与三个资源目录的时间戳 + 尺寸签名，用于探测服务进程外的手工增删。
@@ -408,4 +452,24 @@ export function validateArchivePath(input: string): string {
 
 function normalizeQuestionTitle(title: string): string {
   return title.normalize("NFKC").trim().toLocaleLowerCase();
+}
+
+function readZipEntry(entry: AdmZip.IZipEntry): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    entry.getDataAsync((data, error) => error ? reject(new Error(error)) : resolve(data));
+  });
+}
+
+async function mapConcurrent<T, R>(items: T[], concurrency: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await task(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

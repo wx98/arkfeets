@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import AdmZip from "adm-zip";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { QuestionRepository } from "../question/questionRepository.js";
@@ -106,9 +107,9 @@ describe("QuestionAdminService", () => {
     })).toThrow("每个原图标签必须且只能包含一个键值");
   });
 
-  it("adds full images without creating question drafts", () => {
+  it("adds full images without creating question drafts", async () => {
     const service = createService();
-    expect(service.addImages([{ buffer: Buffer.from("new"), mimetype: "image/png", originalname: "能天使.png" }])).toEqual({
+    await expect(service.addImages([{ buffer: Buffer.from("new"), mimetype: "image/png", originalname: "能天使.png" }])).resolves.toEqual({
       added: ["能天使.png"], conflicts: [],
     });
     expect(service.list().images.map((image) => image.fileName)).toContain("能天使.png");
@@ -126,8 +127,13 @@ describe("QuestionAdminService", () => {
     expect(JSON.parse(readFileSync(join(rootDirectory, "question_data", "existing.json"), "utf8")).tags).toEqual([longTag]);
   });
 
-  it("exports and imports the new resource layout as a union", () => {
-    const archive = new AdmZip(createService().exportZip());
+  it("exports and imports the new resource layout as a union", async () => {
+    const chunks: Buffer[] = [];
+    const output = new PassThrough();
+    output.on("data", (chunk: Buffer) => chunks.push(chunk));
+    await createService().createExport().writeTo(output);
+    const archiveBuffer = Buffer.concat(chunks);
+    const archive = new AdmZip(archiveBuffer);
     expect(archive.getEntry("catalogue.json")).not.toBeNull();
     expect(archive.getEntry("question_data/existing.json")).not.toBeNull();
     expect(archive.getEntry("full_data/existing.png")).not.toBeNull();
@@ -136,7 +142,9 @@ describe("QuestionAdminService", () => {
       mkdirSync(join(destination, "full_data"));
       mkdirSync(join(destination, "question_data"));
       writeFileSync(join(destination, "catalogue.json"), "[]");
-      const imported = new QuestionAdminService(destination, new QuestionRepository(destination)).importZip(archive.toBuffer());
+      const archivePath = join(rootDirectory, "export.zip");
+      writeFileSync(archivePath, archiveBuffer);
+      const imported = await new QuestionAdminService(destination, new QuestionRepository(destination)).importZip(archivePath);
       expect(imported.importedIds).toEqual(["existing"]);
     } finally {
       rmSync(destination, { recursive: true, force: true });

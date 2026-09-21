@@ -55,8 +55,13 @@ describe("MultiplayerRoomManager", () => {
     manager.start("timer", host.sessionId);
 
     vi.advanceTimersByTime(1_050);
+    expect(manager.getView("timer", host.sessionId).state).toBe("REVEAL");
+    expect(manager.getView("timer", host.sessionId).reveal?.timedOut).toBe(true);
+    vi.advanceTimersByTime(1_250);
     expect(manager.getView("timer", host.sessionId).question?.index).toBe(2);
     vi.advanceTimersByTime(1_050);
+    expect(manager.getView("timer", host.sessionId).state).toBe("REVEAL");
+    vi.advanceTimersByTime(1_250);
     expect(manager.getView("timer", host.sessionId).state).toBe("RANKING");
     manager.dispose();
   });

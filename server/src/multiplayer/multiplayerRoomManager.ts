@@ -34,7 +34,7 @@ export interface MultiplayerRoomView {
     endsAt: number;
     overtime: boolean;
   };
-  reveal?: { imageUrl: string; answers: string[]; winnerNickname?: string };
+  reveal?: { imageUrl: string; answers: string[]; winnerNickname?: string; timedOut?: boolean };
   rankingEndsAt?: number;
   winnerSessionIds?: string[];
   feedback?: string;
@@ -66,6 +66,7 @@ interface Room {
   endsAt: number;
   rankingEndsAt?: number;
   roundWinnerSessionId?: string;
+  revealTimedOut?: boolean;
   winnerSessionIds?: string[];
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -218,7 +219,7 @@ export class MultiplayerRoomManager {
   next(roomCode: string, sessionId: string) {
     const room = this.getRoom(roomCode);
     this.assertHost(room, sessionId);
-    if (room.state !== "REVEAL") throw new Error("当前不能进入下一题");
+    if (room.state !== "REVEAL" || room.revealTimedOut) throw new Error("当前不能进入下一题");
     this.advanceAfterQuestion(room);
     return this.toView(room, sessionId);
   }
@@ -274,6 +275,7 @@ export class MultiplayerRoomManager {
     room.startedAt = now;
     room.endsAt = now + this.durations[room.difficulty] * 1000;
     room.roundWinnerSessionId = undefined;
+    room.revealTimedOut = false;
     room.timer = setTimeout(() => this.handleTimeout(room), room.endsAt - now + 20);
     room.timer.unref?.();
     this.changed(room);
@@ -282,10 +284,15 @@ export class MultiplayerRoomManager {
   private handleTimeout(room: Room): void {
     if (room.state !== "ANSWERING") return;
     this.clearTimer(room);
-    this.advanceAfterQuestion(room);
+    room.state = "REVEAL";
+    room.revealTimedOut = true;
+    this.changed(room);
+    room.timer = setTimeout(() => this.advanceAfterQuestion(room), 1_250);
+    room.timer.unref?.();
   }
 
   private advanceAfterQuestion(room: Room): void {
+    this.clearTimer(room);
     if (!room.overtime && room.currentIndex + 1 < room.regularQuestionCount) {
       room.currentIndex += 1;
       this.beginQuestion(room);
@@ -355,6 +362,7 @@ export class MultiplayerRoomManager {
       imageUrl: question.originalImageUrl,
       answers: question.answers,
       winnerNickname: room.roundWinnerSessionId ? room.players.get(room.roundWinnerSessionId)?.nickname : undefined,
+      timedOut: room.revealTimedOut,
     } : undefined;
     return {
       roomCode: room.code,

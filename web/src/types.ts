@@ -56,7 +56,7 @@ export interface MultiplayerRoomView {
     endsAt: number;
     overtime: boolean;
   };
-  reveal?: { imageUrl: string; answers: string[]; winnerNickname?: string };
+  reveal?: { imageUrl: string; answers: string[]; winnerNickname?: string; timedOut?: boolean };
   rankingEndsAt?: number;
   winnerSessionIds?: string[];
   feedback?: string;

@@ -164,9 +164,9 @@ async function leave() {
           </template>
 
           <template v-else>
-            <div><p class="eyebrow">IDENTIFIED / 抢答成功</p><h2>{{ room.reveal?.answers[0] }}</h2><p class="answer-aliases">{{ room.reveal?.winnerNickname }} 首先回答正确</p></div>
-            <button v-if="room.isHost" class="button button--primary" @click="act(() => multiplayerSocket.next(roomCode))"><ArrowRight :size="19" />继续下一题</button>
-            <p v-else class="waiting-copy">等待房主进入下一题...</p>
+            <div><p class="eyebrow">{{ room.reveal?.timedOut ? 'TIME OUT / 时间到' : 'IDENTIFIED / 抢答成功' }}</p><h2>{{ room.reveal?.answers[0] }}</h2><p class="answer-aliases">{{ room.reveal?.timedOut ? '即将自动进入下一题' : `${room.reveal?.winnerNickname} 首先回答正确` }}</p></div>
+            <button v-if="room.isHost && !room.reveal?.timedOut" class="button button--primary" @click="act(() => multiplayerSocket.next(roomCode))"><ArrowRight :size="19" />继续下一题</button>
+            <p v-else-if="!room.reveal?.timedOut" class="waiting-copy">等待房主进入下一题...</p>
           </template>
           <p v-if="error" class="error-text">{{ error }}</p>
         </aside>

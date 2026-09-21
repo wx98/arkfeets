@@ -16,7 +16,8 @@ from typing import Any
 import cv2
 import numpy as np
 
-from foot_detect_core import FootTrackNetDetector
+from foot_detect_core import (DEFAULT_SCORE_THRESHOLDS,
+                              DEFAULT_VISIBILITY_THRESHOLD, FootTrackNetDetector)
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
@@ -33,6 +34,10 @@ def parse_args() -> argparse.Namespace:
         default=Path(__file__).resolve().parent / "foot_track_net-tflite-w8a8" / "foot_track_net.tflite",
     )
     parser.add_argument("--failure-file", type=Path, default=None)
+    parser.add_argument("--failed-only", action="store_true", help="只重试失败清单中的原图")
+    parser.add_argument("--person-threshold", type=float, default=DEFAULT_SCORE_THRESHOLDS[1], help="person 置信度阈值")
+    parser.add_argument("--visibility-threshold", type=float, default=DEFAULT_VISIBILITY_THRESHOLD, help="踝关节可见性阈值")
+    parser.add_argument("--enable-new", action="store_true", help="直接启用新题目；默认保持待审核草稿")
     parser.add_argument("--limit", type=int, default=0, help="只处理前 N 张待处理图片，0 表示不限")
     parser.add_argument("--force", action="store_true", help="重新推理并覆盖已有自动脚部题目")
     parser.add_argument(
@@ -95,18 +100,18 @@ def foot_crop(image: np.ndarray, persons: list[dict[str, Any]]) -> dict[str, int
     pad_left = (640 - resized_width) // 2
     pad_top = (480 - resized_height) // 2
 
-    candidates: list[tuple[float, dict[str, Any], list[list[float]]]] = []
+    candidates: list[tuple[int, float, list[list[float]]]] = []
     for person in persons:
         boxes = person.get("foot_boxes") or []
-        if len(boxes) < 2:
+        if not boxes:
             continue
         person_box = person.get("box") or [0, 0, 0, 0]
         area = max(0, person_box[2] - person_box[0]) * max(0, person_box[3] - person_box[1])
-        candidates.append((float(person.get("score", 0)) * area, person, boxes[:2]))
+        candidates.append((min(len(boxes), 2), float(person.get("score", 0)) * area, boxes[:2]))
     if not candidates:
-        raise ValueError("未检测到同一人物的双脚")
+        raise ValueError("未检测到脚部")
 
-    _, _, canvas_boxes = max(candidates, key=lambda item: item[0])
+    _, _, canvas_boxes = max(candidates, key=lambda item: (item[0], item[1]))
     boxes: list[tuple[float, float, float, float]] = []
     for x1, y1, x2, y2 in canvas_boxes:
         left = min(source_width, max(0.0, (x1 - pad_left) / scale))
@@ -218,6 +223,8 @@ def main() -> int:
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = parse_args()
+    if not 0 <= args.person_threshold <= 1 or not 0 <= args.visibility_threshold <= 1:
+        raise ValueError("检测阈值必须在 0 到 1 之间")
     resource_dir = args.resource_dir.resolve()
     full_data = resource_dir / "full_data"
     question_data = resource_dir / "question_data"
@@ -267,15 +274,30 @@ def main() -> int:
             print(f"校验通过：{verify_generated_dataset(resource_dir, images, failure_path)}", flush=True)
         return 0
 
-    pending = [path for path in images if args.force or path.name not in existing_by_image]
+    previous_failures = read_json(failure_path) if failure_path.exists() else []
+    if args.failed_only and not failure_path.exists():
+        raise ValueError(f"失败清单不存在：{failure_path}")
+    failed_names = {
+        str(item["originalImage"])
+        for item in previous_failures
+        if isinstance(item, dict) and item.get("originalImage")
+    }
+    pending = [
+        path for path in images
+        if (args.force or path.name not in existing_by_image)
+        and (not args.failed_only or path.name in failed_names)
+    ]
     skipped_existing = len(images) - len(pending)
     deferred_by_limit = 0
     if args.limit > 0:
         deferred_by_limit = max(0, len(pending) - args.limit)
         pending = pending[: args.limit]
     print(f"原图 {len(images)} 张，已有脚部题目 {len(existing_by_image)} 道，本次处理 {len(pending)} 张", flush=True)
-    detector = FootTrackNetDetector(str(args.model.resolve()))
-    previous_failures = read_json(failure_path) if failure_path.exists() else []
+    detector = FootTrackNetDetector(
+        str(args.model.resolve()),
+        score_thr=(DEFAULT_SCORE_THRESHOLDS[0], args.person_threshold),
+        vis_thr=args.visibility_threshold,
+    )
     failures_by_image: dict[str, dict[str, Any]] = {
         str(item["originalImage"]): item
         for item in previous_failures
@@ -304,9 +326,11 @@ def main() -> int:
                 image = read_image(image_path)
                 _, result = detector.detect(image)
                 crop = foot_crop(image, result.get("persons", []))
+                feet = max((len(person.get("foot_boxes") or []) for person in result.get("persons", [])), default=0)
                 title = f"{image_path.stem}-脚"
                 identifier = question_id(title)
                 existing_entry = entries_by_id.get(identifier)
+                existing_record = None
                 if existing_entry:
                     existing_record = read_json(resource_dir / existing_entry["file"])
                     if not is_foot_question(existing_record, image_path.name):
@@ -320,7 +344,7 @@ def main() -> int:
                     "tags": flatten_tags(metadata.get("tags", [])),
                     "originalImage": image_path.name,
                     "question": crop,
-                    "enabled": True,
+                    "enabled": existing_record["enabled"] if existing_record else args.enable_new,
                 }
                 if not args.dry_run:
                     write_json_atomic(question_data / f"{identifier}.json", record)
@@ -330,7 +354,7 @@ def main() -> int:
                         entries_by_id[identifier] = entry
                 failures_by_image.pop(image_path.name, None)
                 generated += 1
-                status = f"成功 {identifier} crop={crop['x']},{crop['y']},{crop['width']}x{crop['height']}"
+                status = f"生成 {identifier} ({min(feet, 2)} 只脚) crop={crop['x']},{crop['y']},{crop['width']}x{crop['height']}"
             except Exception as error:  # Keep the batch running and report every per-image failure.
                 failed_this_run += 1
                 if image_path.name in existing_by_image:

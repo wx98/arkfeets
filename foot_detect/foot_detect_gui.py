@@ -11,7 +11,8 @@ import socket
 import gradio as gr
 import numpy as np
 import cv2
-from foot_detect_core import FootTrackNetDetector
+from foot_detect_core import (DEFAULT_IOU_THRESHOLD, DEFAULT_SCORE_THRESHOLDS,
+                              DEFAULT_VISIBILITY_THRESHOLD, FootTrackNetDetector)
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "foot_track_net-tflite-w8a8", "foot_track_net.tflite")
@@ -27,7 +28,8 @@ except RuntimeError as e:
     raise SystemExit(1)
 
 # 默认阈值（与核心模块一致）
-DEFAULT = {"face": 0.6, "person": 0.7, "vis": 0.05, "iou": 0.3}
+DEFAULT = {"face": DEFAULT_SCORE_THRESHOLDS[0], "person": DEFAULT_SCORE_THRESHOLDS[1],
+           "vis": DEFAULT_VISIBILITY_THRESHOLD, "iou": DEFAULT_IOU_THRESHOLD}
 
 
 def process_image(image: np.ndarray | None,
@@ -86,13 +88,13 @@ with gr.Blocks(title="FootTrackNet 脚部检测（可调参）") as demo:
             btn = gr.Button("开始检测", variant="primary")
             gr.Markdown("### 检测参数（拖动实时生效）")
             person_slider = gr.Slider(0.0, 0.9, value=DEFAULT["person"], step=0.05,
-                                      label="person 置信度阈值（调低→检出更多，默认0.70）")
+                                       label=f"person 置信度阈值（调低→检出更多，默认{DEFAULT['person']:.2f}）")
             vis_slider = gr.Slider(0.0, 0.5, value=DEFAULT["vis"], step=0.01,
-                                   label="踝关节可见性阈值（调低→更多脚框，默认0.05）")
+                                    label=f"踝关节可见性阈值（调低→更多脚框，默认{DEFAULT['vis']:.2f}）")
             face_slider = gr.Slider(0.0, 0.9, value=DEFAULT["face"], step=0.05,
-                                    label="face 置信度阈值（默认0.60）")
+                                     label=f"face 置信度阈值（默认{DEFAULT['face']:.2f}）")
             iou_slider = gr.Slider(0.1, 0.9, value=DEFAULT["iou"], step=0.05,
-                                   label="NMS 去重阈值（默认0.30）")
+                                    label=f"NMS 去重阈值（默认{DEFAULT['iou']:.2f}）")
         with gr.Column(scale=1):
             out_img = gr.Image(label="检测结果", type="numpy")
             out_txt = gr.Textbox(label="检测明细", lines=12)

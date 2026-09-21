@@ -41,6 +41,9 @@ LMK_NAMES = ["nose", "leye", "reye", "lear", "rear",
 # 脚部相关关键点索引
 ANKLE_IDX = [15, 16]          # lankle / rankle
 KNEE_IDX = [13, 14]
+DEFAULT_SCORE_THRESHOLDS = (0.6, 0.6)
+DEFAULT_VISIBILITY_THRESHOLD = 0.1
+DEFAULT_IOU_THRESHOLD = 0.3
 
 COLORS = {
     "person": (255, 0, 0),     # BGR 红
@@ -114,8 +117,9 @@ def ensure_model_file(model_path: str):
 class FootTrackNetDetector:
     """FootTrackNet 检测器：加载 tflite 模型并实现完整预处理/推理/后处理"""
 
-    def __init__(self, model_path: str, score_thr=(0.6, 0.7), iou_thr=0.3,
-                 vis_thr=0.05):
+    def __init__(self, model_path: str, score_thr=DEFAULT_SCORE_THRESHOLDS,
+                 iou_thr=DEFAULT_IOU_THRESHOLD,
+                 vis_thr=DEFAULT_VISIBILITY_THRESHOLD):
         self.model_path, msg = ensure_model_file(model_path)
         if not self.model_path:
             raise RuntimeError(
@@ -322,16 +326,21 @@ class FootTrackNetDetector:
         max_face = max((f[4] for f in faces), default=0.0)
         max_ankle_vis = 0.0
         n_ankles = 0
+        person_candidates = []
         for p in persons:
+            ankle_visibilities = []
             for ai in ANKLE_IDX:
-                av = p[5][ai][2]
+                ax, ay, av = p[5][ai]
                 max_ankle_vis = max(max_ankle_vis, av)
                 if av > 0.05:
                     n_ankles += 1
+                ankle_visibilities.append(round(float(av), 4) if ax > 0 and ay > 0 else -1.0)
+            person_candidates.append({"score": round(float(p[4]), 4), "ankles": ankle_visibilities})
         return {"max_person": round(float(max_person), 4),
                 "max_face": round(float(max_face), 4),
                 "max_ankle_vis": round(float(max_ankle_vis), 4),
-                "n_ankles": n_ankles}
+                "n_ankles": n_ankles,
+                "person_candidates": person_candidates}
 
 
 if __name__ == "__main__":

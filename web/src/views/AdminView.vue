@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Database, Download, FilePlus2,
-  FolderOpen, FolderUp, Image as ImageIcon, Images, ListTree, LoaderCircle, LogIn, LogOut, PanelLeftClose,
-  PanelLeftOpen, Plus, RotateCcw, Save, Scissors, Search, Trash2, Upload,
+  Eye, FolderOpen, FolderUp, Image as ImageIcon, Images, ListTree, LoaderCircle, LogIn, LogOut, Maximize2,
+  PanelLeftClose, PanelLeftOpen, Plus, RotateCcw, Save, Scissors, Search, Trash2, Upload, X, ZoomIn, ZoomOut,
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { Cropper } from "vue-advanced-cropper";
 import "vue-advanced-cropper/dist/style.css";
 import { useRouter } from "vue-router";
+import CropImageCanvas from "../components/CropImageCanvas.vue";
 import type { CropRect, Difficulty } from "../types";
 
 interface ImageMetadata {
@@ -81,9 +82,13 @@ const metadataTagRows = ref<MetadataTagRow[]>([]);
 const workbench = ref<HTMLElement>();
 const adminEditor = ref<HTMLElement>();
 const cropper = ref<InstanceType<typeof Cropper>>();
+const viewerCanvas = ref<InstanceType<typeof CropImageCanvas>>();
 const cropAspect = ref<number | undefined>();
 const cropConfirmed = ref(false);
-const isCropping = ref(false);
+const cropDialogOpen = ref(false);
+const cropReady = ref(false);
+const draftCrop = ref<CropRect | null>(null);
+const imageViewer = ref<"original" | "crop" | null>(null);
 const hoveredImage = ref<LibraryImage>();
 const imagePreviewPosition = ref({ x: 0, y: 0 });
 const hoveredQuestion = ref<LibraryQuestion>();
@@ -178,32 +183,21 @@ const duplicateTitleId = computed(() => {
   ].find((question) => question.id === id || normalizeQuestionTitle(question.title) === normalizedTitle);
   return duplicate?.id ?? "";
 });
-const previewStyle = computed(() => {
-  const crop = form.value.question;
-  if (!crop) return {};
-  return {
-    width: `${(crop.sourceWidth / crop.width) * 100}%`,
-    height: `${(crop.sourceHeight / crop.height) * 100}%`,
-    left: `${-(crop.x / crop.width) * 100}%`,
-    top: `${-(crop.y / crop.height) * 100}%`,
-  };
-});
-const previewViewportStyle = computed(() => {
-  const crop = form.value.question;
-  if (!crop) return {};
-  const ratio = crop.width / crop.height;
-  return {
-    aspectRatio: `${crop.width} / ${crop.height}`,
-    width: ratio >= 16 / 9 ? "100%" : "auto",
-    height: ratio >= 16 / 9 ? "auto" : "100%",
-  };
-});
-
 onMounted(() => {
   window.addEventListener("click", handleGlobalClick);
+  window.addEventListener("keydown", handleDialogKeydown);
   if (token.value) void loadLibrary().catch(handleError);
 });
-onBeforeUnmount(() => window.removeEventListener("click", handleGlobalClick));
+onBeforeUnmount(() => {
+  window.removeEventListener("click", handleGlobalClick);
+  window.removeEventListener("keydown", handleDialogKeydown);
+});
+
+function handleDialogKeydown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  if (cropDialogOpen.value) closeCropDialog();
+  else imageViewer.value = null;
+}
 
 function handleGlobalClick(event: MouseEvent) {
   if (imageSelectOpen.value && imageSelectRoot.value && !imageSelectRoot.value.contains(event.target as Node)) {
@@ -252,7 +246,8 @@ function selectImage(image: LibraryImage) {
   isNew.value = false;
   metadataForm.value = clone(image.metadata);
   metadataTagRows.value = metadataTagsToRows(image.metadata.tags);
-  isCropping.value = false;
+  closeCropDialog();
+  imageViewer.value = null;
   message.value = "";
   error.value = "";
   resetEditorScroll();
@@ -276,9 +271,8 @@ async function selectQuestion(question: LibraryQuestion) {
   if (!form.value.answers.length) form.value.answers = [""];
   tagText.value = form.value.tags.join("，");
   cropConfirmed.value = Boolean(form.value.question);
-  isCropping.value = false;
-  await nextTick();
-  restoreCrop();
+  closeCropDialog();
+  imageViewer.value = null;
   resetEditorScroll();
 }
 
@@ -299,7 +293,8 @@ function beginQuestion(image: LibraryImage) {
   imageSelectOpen.value = false;
   tagText.value = form.value.tags.join("，");
   cropConfirmed.value = false;
-  isCropping.value = false;
+  closeCropDialog();
+  imageViewer.value = null;
   cropAspect.value = undefined;
   message.value = "";
   error.value = "";
@@ -328,7 +323,8 @@ function chooseQuestionImage(image: LibraryImage) {
     // 裁切坐标只对当前原图有效，换图后必须重新框选谜面
     form.value.question = null;
     cropConfirmed.value = false;
-    isCropping.value = false;
+    closeCropDialog();
+    imageViewer.value = null;
     if (!form.value.title.trim() || form.value.title === autoFilledTitle.value) {
       form.value.title = imageLabel(image.fileName);
       autoFilledTitle.value = form.value.title;
@@ -346,35 +342,56 @@ function restoreCrop() {
   instance?.setCoordinates?.({ left: crop.x, top: crop.y, width: crop.width, height: crop.height });
 }
 
-function toggleCropEditing() {
-  if (!isCropping.value) {
-    isCropping.value = true;
-    cropConfirmed.value = false;
-    message.value = "";
-    error.value = "";
-    return;
-  }
+function handleCropReady() {
+  restoreCrop();
+  void nextTick(() => { cropReady.value = true; });
+}
+
+function openCropDialog() {
+  if (!currentImageUrl.value) return;
+  cropReady.value = false;
+  draftCrop.value = form.value.question ? clone(form.value.question) : null;
+  cropDialogOpen.value = true;
+  message.value = "";
+  error.value = "";
+}
+
+function closeCropDialog() {
+  cropDialogOpen.value = false;
+  cropReady.value = false;
+  draftCrop.value = null;
+}
+
+function saveCropDialog() {
+  if (!cropReady.value) return;
   if (!captureCurrentCrop()) return;
-  isCropping.value = false;
+  form.value.question = draftCrop.value;
   cropConfirmed.value = true;
+  closeCropDialog();
   message.value = "裁切已保存并锁定，保存题目后生效";
 }
 
 function captureCurrentCrop(): boolean {
   const result = cropper.value?.getResult() as { coordinates?: { left: number; top: number; width: number; height: number }; image?: { width: number; height: number } } | undefined;
   if (!result?.coordinates || !result.image) { error.value = "请先在原图上框选谜面"; return false; }
+  const { left, top, width, height } = result.coordinates;
+  if (![left, top, width, height, result.image.width, result.image.height].every(Number.isFinite)
+    || width < 1 || height < 1 || result.image.width < 1 || result.image.height < 1
+    || left < 0 || top < 0 || left + width > result.image.width + 1 || top + height > result.image.height + 1) {
+    error.value = "裁切坐标无效，请等待图片加载后重新框选";
+    return false;
+  }
   applyCropResult({ coordinates: result.coordinates, image: result.image });
   return true;
 }
 
 function handleCropChange(result: { coordinates?: { left: number; top: number; width: number; height: number }; image?: { width: number; height: number } }) {
-  if (!isCropping.value || !result.coordinates || !result.image) return;
+  if (!cropReady.value || !result.coordinates || !result.image) return;
   applyCropResult({ coordinates: result.coordinates, image: result.image });
-  cropConfirmed.value = false;
 }
 
 function applyCropResult(result: { coordinates: { left: number; top: number; width: number; height: number }; image: { width: number; height: number } }) {
-  form.value.question = {
+  draftCrop.value = {
     x: Math.round(result.coordinates.left),
     y: Math.round(result.coordinates.top),
     width: Math.round(result.coordinates.width),
@@ -844,20 +861,27 @@ function questionPreviewStyle(question: LibraryQuestion) {
         <section class="admin-form-section">
           <div class="admin-section-title"><span>01</span><div><strong>谜底与谜面</strong><small>ORIGINAL / CROP</small></div></div>
           <div class="image-dual-preview">
-            <figure><figcaption>谜底 · 完整原图</figcaption><img :src="currentImageUrl" alt="完整原图" /></figure>
-            <figure><figcaption>谜面 · 实时裁切</figcaption><div class="crop-preview-frame"><div v-if="form.question" class="crop-preview" :style="previewViewportStyle"><img :src="currentImageUrl" :style="previewStyle" alt="谜面预览" /></div><div v-else class="crop-preview--empty">尚未确认裁切</div></div></figure>
+            <figure>
+              <figcaption>谜底 · 完整原图</figcaption>
+              <button type="button" class="image-preview-button" title="查看完整原图" :disabled="!currentImageUrl" @click="imageViewer = 'original'">
+                <img :src="currentImageUrl" alt="完整原图" />
+                <Maximize2 :size="17" class="image-preview-button__icon" />
+              </button>
+            </figure>
+            <figure>
+              <figcaption>谜面 · 实时裁切</figcaption>
+              <button type="button" class="image-preview-button" title="查看谜面裁切" :disabled="!currentImageUrl || !form.question" @click="imageViewer = 'crop'">
+                <CropImageCanvas v-if="form.question && currentImageUrl" :image-url="currentImageUrl" :crop="form.question" />
+                <span v-else class="crop-preview--empty">尚未确认裁切</span>
+                <Maximize2 v-if="form.question" :size="17" class="image-preview-button__icon" />
+              </button>
+            </figure>
           </div>
-          <div class="crop-toolbar">
-            <button class="button crop-confirm" :class="{ 'button--primary': isCropping }" :disabled="busy" @click="toggleCropEditing">
-              <component :is="isCropping ? Save : Scissors" :size="16" />{{ isCropping ? '保存裁切' : '裁剪' }}
-            </button>
-            <div class="crop-ratios">
-              <button :class="{ active: cropAspect === 16 / 9 }" :disabled="!isCropping" @click="cropAspect = 16 / 9">16:9</button>
-              <button :class="{ active: cropAspect === 1 }" :disabled="!isCropping" @click="cropAspect = 1">1:1</button>
-              <button :class="{ active: !cropAspect }" :disabled="!isCropping" @click="cropAspect = undefined">自由</button>
-            </div>
+          <div class="image-action-group" role="group" aria-label="图片操作">
+            <button type="button" :disabled="!currentImageUrl" @click="imageViewer = 'original'"><Eye :size="16" />查看原图</button>
+            <button type="button" :disabled="!currentImageUrl || !form.question" @click="imageViewer = 'crop'"><ZoomIn :size="16" />查看谜面</button>
+            <button type="button" :disabled="busy || !currentImageUrl" @click="openCropDialog"><Scissors :size="16" />裁剪谜面</button>
           </div>
-          <Cropper v-if="currentImageUrl" ref="cropper" class="question-cropper" :class="{ 'is-locked': !isCropping }" :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }" image-restriction="stencil" @ready="restoreCrop" @change="handleCropChange" />
         </section>
 
         <section class="admin-form-section">
@@ -958,6 +982,43 @@ function questionPreviewStyle(question: LibraryQuestion) {
       <span v-if="questionPreview" class="question-hover-preview" :style="questionPreview.style">
         <img :src="questionPreview.imageUrl" :style="{ width: `${questionPreview.crop.sourceWidth / questionPreview.crop.width * 100}%`, height: `${questionPreview.crop.sourceHeight / questionPreview.crop.height * 100}%`, left: `${-questionPreview.crop.x / questionPreview.crop.width * 100}%`, top: `${-questionPreview.crop.y / questionPreview.crop.height * 100}%` }" alt="" />
       </span>
+      <div v-if="imageViewer && currentImageUrl" class="admin-modal-backdrop" @click.self="imageViewer = null">
+        <section class="admin-image-viewer" role="dialog" aria-modal="true" :aria-label="imageViewer === 'original' ? '完整原图查看器' : '谜面裁切查看器'">
+          <header class="admin-modal-header">
+            <div><small>{{ imageViewer === 'original' ? 'ORIGINAL IMAGE' : 'QUESTION CROP' }}</small><strong>{{ imageViewer === 'original' ? '完整原图' : '谜面裁切' }}</strong></div>
+            <div class="admin-viewer-controls">
+              <button class="icon-button" title="缩小" aria-label="缩小" @click="viewerCanvas?.zoomBy(1 / 1.25)"><ZoomOut :size="18" /></button>
+              <button class="icon-button" title="适应画面" aria-label="适应画面" @click="viewerCanvas?.resetView()"><Maximize2 :size="18" /></button>
+              <button class="icon-button" title="放大" aria-label="放大" @click="viewerCanvas?.zoomBy(1.25)"><ZoomIn :size="18" /></button>
+              <button class="icon-button" title="关闭查看器" aria-label="关闭查看器" @click="imageViewer = null"><X :size="20" /></button>
+            </div>
+          </header>
+          <CropImageCanvas ref="viewerCanvas" class="admin-image-viewer__canvas" :image-url="currentImageUrl"
+            :crop="imageViewer === 'crop' ? form.question : null" interactive :animate="imageViewer === 'crop'" />
+        </section>
+      </div>
+      <div v-if="cropDialogOpen && currentImageUrl" class="admin-modal-backdrop" @click.self="closeCropDialog">
+        <section class="admin-crop-dialog" role="dialog" aria-modal="true" aria-label="裁剪谜面">
+          <header class="admin-modal-header">
+            <div><small>QUESTION CROP</small><strong>裁剪谜面</strong></div>
+            <button class="icon-button" title="取消裁剪" aria-label="取消裁剪" @click="closeCropDialog"><X :size="20" /></button>
+          </header>
+          <Cropper ref="cropper" class="question-cropper" :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }"
+            image-restriction="stencil" @ready="handleCropReady" @change="handleCropChange" />
+          <p v-if="error" class="admin-crop-dialog__error" role="alert">{{ error }}</p>
+          <footer class="admin-crop-dialog__footer">
+            <div class="crop-ratios" role="group" aria-label="裁切比例">
+              <button :class="{ active: cropAspect === 16 / 9 }" @click="cropAspect = 16 / 9">16:9</button>
+              <button :class="{ active: cropAspect === 1 }" @click="cropAspect = 1">1:1</button>
+              <button :class="{ active: !cropAspect }" @click="cropAspect = undefined">自由</button>
+            </div>
+            <div class="admin-crop-dialog__actions">
+              <button class="button button--quiet" @click="closeCropDialog">取消</button>
+              <button class="button button--primary" :disabled="!cropReady" @click="saveCropDialog"><Save :size="16" />保存裁切</button>
+            </div>
+          </footer>
+        </section>
+      </div>
     </Teleport>
   </main>
 </template>

@@ -114,7 +114,8 @@ def ensure_model_file(model_path: str):
 class FootTrackNetDetector:
     """FootTrackNet 检测器：加载 tflite 模型并实现完整预处理/推理/后处理"""
 
-    def __init__(self, model_path: str, score_thr=(0.6, 0.7), iou_thr=0.3):
+    def __init__(self, model_path: str, score_thr=(0.6, 0.7), iou_thr=0.3,
+                 vis_thr=0.05):
         self.model_path, msg = ensure_model_file(model_path)
         if not self.model_path:
             raise RuntimeError(
@@ -122,8 +123,9 @@ class FootTrackNetDetector:
                 "\n请确认脚本目录下存在 foot_track_net-tflite-w8a8/foot_track_net.tflite"
                 "（约 2.7MB），或检查网络后重试（脚本会自动下载）。")
         print(f"[FootTrackNet] {msg}")
-        self.score_thr = score_thr          # (face, person)
-        self.iou_thr = iou_thr
+        self.score_thr = score_thr          # (face, person) 检测置信度阈值
+        self.iou_thr = iou_thr              # NMS 去重阈值
+        self.vis_thr = vis_thr              # 踝关节可见性阈值（画脚框的最低要求）
         self.interp = tflite.Interpreter(model_path=self.model_path, num_threads=4)
         self.interp.allocate_tensors()
         self.inp = self.interp.get_input_details()[0]
@@ -181,14 +183,18 @@ class FootTrackNetDetector:
                 keep.append(d)
         return keep
 
-    def decode(self, heat, bbox, lmark, lvis):
+    def decode(self, heat, bbox, lmark, lvis, score_thr=None, iou_thr=None):
         """解码 face / person 框 + person 关键点（坐标为 640x480 画布像素）"""
+        if score_thr is None:
+            score_thr = self.score_thr
+        if iou_thr is None:
+            iou_thr = self.iou_thr
         dets = {0: [], 1: []}
         for c in (0, 1):
             hm = heat[..., c]
             flat = hm.reshape(-1)
             idx = np.argsort(-flat)[:500]
-            thr = self.score_thr[c]
+            thr = score_thr[c]
             for k in idx:
                 sc = float(flat[k])
                 if sc <= thr:
@@ -198,8 +204,8 @@ class FootTrackNetDetector:
                 x1, y1, x2, y2 = (np.array([cx, cy, cx, cy]) +
                                   np.array([-x1, -y1, x2, y2])) * STRIDE
                 dets[c].append((float(x1), float(y1), float(x2), float(y2), sc))
-        dets[0] = self._nms(dets[0], self.iou_thr)
-        dets[1] = self._nms(dets[1], self.iou_thr)
+        dets[0] = self._nms(dets[0], iou_thr)
+        dets[1] = self._nms(dets[1], iou_thr)
 
         # person 关键点：取每个 person 检测峰值处的 landmark
         persons = []
@@ -217,15 +223,16 @@ class FootTrackNetDetector:
         return dets[0], persons
 
     # ---------- 脚部框派生 ----------
-    @staticmethod
-    def derive_foot_boxes(person):
+    def derive_foot_boxes(self, person, vis_thr=None):
         """根据 person 框与踝关节派生脚部框：脚踝下方至 person 框底"""
+        if vis_thr is None:
+            vis_thr = self.vis_thr
         x1, y1, x2, y2, sc, kps = person
         w = x2 - x1
         foot_boxes = []
         for ai in ANKLE_IDX:
             ax, ay, vis = kps[ai]
-            if vis < 0.05 or ax <= 0 or ay <= 0:
+            if vis < vis_thr or ax <= 0 or ay <= 0:
                 continue
             half_w = max(w * 0.14, 12.0)          # 脚宽约 person 宽的 28%
             top = ay                              # 从踝关节开始
@@ -266,12 +273,16 @@ class FootTrackNetDetector:
         return out
 
     # ---------- 端到端 ----------
-    def detect(self, img_bgr: np.ndarray):
-        """输入 BGR 图，返回 (标注图 BGR, 结构化结果 dict)"""
+    def detect(self, img_bgr: np.ndarray, score_thr=None, vis_thr=None,
+               iou_thr=None):
+        """输入 BGR 图，返回 (标注图 BGR, 结构化结果 dict)。
+        可临时覆盖阈值参数用于调参实验。"""
         tensor, scale, pad = self.preprocess(img_bgr)
         heat, bbox, lmark, lvis = self.infer(tensor)
-        faces, persons = self.decode(heat, bbox, lmark, lvis)
-        foot_boxes_list = [self.derive_foot_boxes(p) for p in persons]
+        faces, persons = self.decode(heat, bbox, lmark, lvis,
+                                     score_thr=score_thr, iou_thr=iou_thr)
+        foot_boxes_list = [self.derive_foot_boxes(p, vis_thr=vis_thr)
+                           for p in persons]
         annotated = self.draw(img_bgr, faces, persons, foot_boxes_list, scale, pad)
 
         result = {
@@ -291,6 +302,36 @@ class FootTrackNetDetector:
                            zip(ANKLE_IDX, [kps[i] for i in ANKLE_IDX])],
             })
         return annotated, result
+
+    # ---------- 诊断（调参用） ----------
+    def diagnose(self, img_bgr: np.ndarray) -> dict:
+        """
+        低阈值扫描，返回图片的"检测潜力"（与阈值无关的原始分数）：
+          max_person    : 图中检测到的最强 person 置信度（0~1）
+          max_face      : 最强 face 置信度
+          max_ankle_vis : person 峰值处踝关节的最大可见性
+          n_ankles      : 可见性>0.05 的踝关节数量
+        用途：判断一张图"模型到底有没有检测到人/脚"，
+              区分"阈值太严"（分数高但被过滤）与"模型不适用"（分数极低）。
+        """
+        tensor, scale, pad = self.preprocess(img_bgr)
+        heat, bbox, lmark, lvis = self.infer(tensor)
+        faces, persons = self.decode(heat, bbox, lmark, lvis,
+                                     score_thr=(0.01, 0.01), iou_thr=0.5)
+        max_person = max((p[4] for p in persons), default=0.0)
+        max_face = max((f[4] for f in faces), default=0.0)
+        max_ankle_vis = 0.0
+        n_ankles = 0
+        for p in persons:
+            for ai in ANKLE_IDX:
+                av = p[5][ai][2]
+                max_ankle_vis = max(max_ankle_vis, av)
+                if av > 0.05:
+                    n_ankles += 1
+        return {"max_person": round(float(max_person), 4),
+                "max_face": round(float(max_face), 4),
+                "max_ankle_vis": round(float(max_ankle_vis), 4),
+                "n_ankles": n_ankles}
 
 
 if __name__ == "__main__":

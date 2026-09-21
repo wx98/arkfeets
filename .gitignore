@@ -282,3 +282,4 @@ dist
 
 /server/resource/full_data/*json
 /server/resource/full_data/*png
+.workbuddy/

@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { AnswerAudit, GameEndAudit, GameStartAudit } from "./gameAuditLogger.js";
@@ -38,7 +38,7 @@ const logName = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[A-Za-z0-9_-]+_[a-f
 export class GameAuditReader {
   private readonly summaryCache = new Map<string, { size: number; modified: number; summary: GameLogSummary }>();
 
-  constructor(private readonly directory: string) {}
+  constructor(private readonly directory: string, private readonly isActive: (id: string) => boolean = () => false) {}
 
   async list(page: number, pageSize: number): Promise<{ items: GameLogSummary[]; total: number; page: number; pageSize: number }> {
     const files = (await readdir(this.directory, { withFileTypes: true }))
@@ -55,6 +55,17 @@ export class GameAuditReader {
     if (!logName.test(id)) throw new Error("无效的对局记录 ID");
     const result = await this.scan(id, page * pageSize, pageSize, search.trim().toLocaleLowerCase(), correct);
     return { ...result, page, pageSize };
+  }
+
+  async delete(id: string): Promise<{ deleted: true; id: string }> {
+    if (!logName.test(id)) throw new Error("无效的对局记录 ID");
+    if (this.isActive(id)) throw new Error("对局仍在进行，不能删除正在写入的记录");
+    const path = join(this.directory, id);
+    const file = await lstat(path);
+    if (!file.isFile()) throw new Error("对局记录不存在");
+    await unlink(path);
+    this.summaryCache.delete(id);
+    return { deleted: true, id };
   }
 
   private async scan(id: string, offset = 0, limit = 0, search = "", correct?: boolean): Promise<ScanResult> {

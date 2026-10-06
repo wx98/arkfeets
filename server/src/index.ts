@@ -38,7 +38,7 @@ const soloSessionManager = new SoloSessionManager(questionRepository);
 const adminSessions = new AdminSessionManager(config.adminPassword, (config.adminSessionHours ?? 8) * 60 * 60 * 1000);
 const questionAdminService = new QuestionAdminService(resourceDirectory, questionRepository);
 const gameAuditLogger = new GameAuditLogger(join(currentDir, "../logs/games"));
-const gameAuditReader = new GameAuditReader(join(currentDir, "../logs/games"));
+const gameAuditReader = new GameAuditReader(join(currentDir, "../logs/games"), id => gameAuditLogger.isActiveFile(id));
 let bilibiliBridge: BilibiliDanmakuBridge;
 
 app.use("/full-data", express.static(join(resourceDirectory, "full_data")));

@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AnswerSource } from "./multiplayerRoomManager.js";
 
@@ -34,6 +34,11 @@ export class GameAuditLogger {
 
   constructor(private readonly directory: string) {
     mkdirSync(directory, { recursive: true });
+  }
+
+  isActiveFile(id: string): boolean {
+    for (const file of this.active.values()) if (basename(file) === id) return true;
+    return false;
   }
 
   start(roomCode: string, details: GameStartAudit): string {

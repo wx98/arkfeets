@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -35,6 +35,24 @@ describe("game audit reader", () => {
       const openId = basename(openFile);
       expect((await reader.detail(openId, 0, 20)).summary.status).toBe("in_progress");
       expect((await reader.list(0, 20)).total).toBe(2);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("deletes a finished log but protects active logs and rejects unsafe IDs", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "arkfeets-audit-delete-"));
+    const logger = new GameAuditLogger(directory);
+    const reader = new GameAuditReader(directory, id => logger.isActiveFile(id));
+    try {
+      const file = logger.start("LIVE1", { answerSource: "BILIBILI", difficulty: "medium", requestedCount: 20, questionCount: 1 });
+      const id = basename(file);
+      await expect(reader.delete(id)).rejects.toThrow("正在写入");
+      expect(existsSync(file)).toBe(true);
+      logger.end("LIVE1", { reason: "completed", players: [] });
+      expect(await reader.delete(id)).toEqual({ deleted: true, id });
+      expect(existsSync(file)).toBe(false);
+      expect((await reader.list(0, 20)).total).toBe(0);
+      await expect(reader.delete(id)).rejects.toThrow();
+      await expect(reader.delete("../config.json")).rejects.toThrow("无效的对局记录 ID");
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

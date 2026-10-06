@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ArrowLeft, ChevronLeft, ChevronRight, History, Radio, RefreshCw, Search } from "lucide-vue-next";
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { ArrowLeft, ChevronLeft, ChevronRight, History, Radio, RefreshCw, Search, Trash2, X } from "lucide-vue-next";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 interface Summary {
   id: string; roomCode: string; startedAt: string; endedAt: string | null; answerSource: string;
@@ -23,6 +23,10 @@ const games = ref<Summary[]>([]);
 const total = ref(0);
 const listPage = ref(0);
 const selectedId = ref("");
+const selectedGame = computed(() => games.value.find(game => game.id === selectedId.value));
+const deleteCandidate = ref<Summary | null>(null);
+const deleting = ref(false);
+const deleteError = ref("");
 const detail = ref<Detail | null>(null);
 const answerPage = ref(0);
 const search = ref("");
@@ -92,6 +96,28 @@ function selectGame(id: string) {
   void loadDetail();
 }
 
+function openDeleteDialog() {
+  deleteError.value = "";
+  deleteCandidate.value = selectedGame.value ?? null;
+}
+
+async function deleteSelectedGame() {
+  const candidate = deleteCandidate.value;
+  if (!candidate || deleting.value) return;
+  deleting.value = true;
+  try {
+    await request(`games/${encodeURIComponent(candidate.id)}`, "DELETE");
+    detailRequest++;
+    selectedId.value = "";
+    detail.value = null;
+    deleteCandidate.value = null;
+    if (games.value.length === 1 && listPage.value > 0) listPage.value--;
+    await loadGames();
+  } catch (cause) {
+    deleteError.value = cause instanceof Error ? cause.message : "删除对局失败";
+  } finally { deleting.value = false; }
+}
+
 async function login() {
   try {
     await request("login", "POST", { password: password.value });
@@ -141,7 +167,13 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
     </section>
     <div v-else class="records-layout">
       <aside class="records-list">
-        <div class="records-panel-heading"><h2>历史对局</h2><span>{{ total }} 局</span></div>
+        <div class="records-panel-heading">
+          <h2>历史对局</h2>
+          <div class="records-panel-actions">
+            <button title="删除选中对局" aria-label="删除选中对局" :disabled="!selectedGame || loadingList" @click="openDeleteDialog"><Trash2 :size="17" /></button>
+            <span>{{ total }} 局</span>
+          </div>
+        </div>
         <p v-if="loadingList && !games.length" class="records-empty">正在读取记录...</p>
         <p v-else-if="!games.length" class="records-empty">暂无对局记录</p>
         <ol v-else>
@@ -174,6 +206,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
             </dl>
             <p v-if="detail.summary.invalidLines" class="records-warning">{{ detail.summary.invalidLines }} 条日志无法解析，已跳过。</p>
           </header>
+          <div class="records-detail__columns">
           <section class="records-events">
             <div class="records-section-title"><h3>答案记录</h3><span>{{ detail.matchedCount }} 条</span></div>
             <div class="records-filters">
@@ -199,10 +232,27 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
             <p v-if="!detail.end" class="records-empty">这局对局尚无结束记录</p>
             <ol v-else><li v-for="player in detail.end.players" :key="player.userId"><span class="records-final__rank">#{{ player.rank }}</span><strong>{{ player.nickname }}</strong><small>ID {{ player.userId }}</small><b>{{ player.score }} 分</b></li></ol>
           </section>
+          </div>
         </div>
         <div v-else class="records-placeholder"><History :size="42" /><p>选择一局查看完整记录</p></div>
       </section>
     </div>
+    <Teleport to="body">
+      <div v-if="deleteCandidate" class="records-delete-backdrop" @click.self="deleteCandidate = null">
+        <section class="records-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="records-delete-title">
+          <button class="records-delete-close" title="关闭" aria-label="关闭" :disabled="deleting" @click="deleteCandidate = null"><X :size="18" /></button>
+          <Trash2 :size="28" class="records-delete-icon" />
+          <h2 id="records-delete-title">删除对局记录？</h2>
+          <p>房间 <strong>{{ deleteCandidate.roomCode }}</strong> · {{ formatTime(deleteCandidate.startedAt) }}</p>
+          <p>这会永久删除该局日志，无法恢复，不影响房间和题库。</p>
+          <p v-if="deleteError" class="records-delete-error" role="alert">{{ deleteError }}</p>
+          <div class="records-delete-actions">
+            <button :disabled="deleting" @click="deleteCandidate = null">取消</button>
+            <button class="danger" :disabled="deleting" @click="deleteSelectedGame">{{ deleting ? '删除中...' : '确认删除' }}</button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </main>
 </template>
 
@@ -216,9 +266,15 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
 .records-refresh:disabled { opacity: .5; cursor: wait; }
 .records-error { margin: 0; padding: 10px 24px; background: #ffebdb; color: #8c4026; }
 .records-layout { display: grid; grid-template-columns: minmax(270px, 310px) minmax(0, 1fr); height: calc(100dvh - 80px); }
-.records-list, .records-detail { min-width: 0; overflow-y: auto; }
+.records-list, .records-detail { min-width: 0; }
 .records-list { display: flex; flex-direction: column; background: #fff; border-right: 1px solid #d0d5d1; }
+.records-list { overflow-y: auto; }
+.records-detail { overflow: hidden; }
 .records-panel-heading { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: baseline; padding: 18px 20px 14px; background: #fff; border-bottom: 1px solid #d0d5d1; }
+.records-panel-actions { display: flex; align-items: center; gap: 12px; }
+.records-panel-actions button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #d6dcd5; background: #fff; color: #a14b39; cursor: pointer; }
+.records-panel-actions button:hover:not(:disabled) { background: #fff0eb; }
+.records-panel-actions button:disabled { opacity: .4; cursor: default; }
 .records-panel-heading h2, .records-section-title h3 { margin: 0; font-size: 17px; }
 .records-panel-heading span, .records-section-title span { color: #6f7874; font-size: 12px; }
 .records-list ol, .records-answers, .records-final ol { margin: 0; padding: 0; list-style: none; }
@@ -232,8 +288,9 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
 .records-pager { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 12px; margin-top: auto; border-top: 1px solid #dce0dc; font-size: 12px; }
 .records-pager button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #cbd2cb; background: #fff; cursor: pointer; }
 .records-pager button:disabled { opacity: .4; cursor: default; }
-.records-detail__inner { max-width: 1100px; margin: 0 auto; }
-.records-summary { padding: 24px 30px; background: #fff; border-bottom: 1px solid #d0d5d1; }
+.records-detail__inner { height: 100%; display: flex; flex-direction: column; }
+.records-detail__columns { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 30%); }
+.records-summary { flex: none; padding: 24px 30px; background: #fff; border-bottom: 1px solid #d0d5d1; }
 .records-summary__title { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .records-summary__title small { color: #68736e; font-size: 10px; }
 .records-summary h2 { margin: 4px 0 0; font-size: 22px; }
@@ -243,7 +300,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
 .records-summary dt, .records-answer__values small { color: #777f7b; font-size: 11px; }
 .records-summary dd { margin: 5px 0 0; font-size: 14px; overflow-wrap: anywhere; }
 .records-warning { color: #9a4d32; font-size: 12px; }
-.records-events, .records-final { padding: 22px 30px; }
+.records-events, .records-final { min-width: 0; overflow-y: auto; padding: 22px 24px; }
 .records-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .records-filters { display: flex; gap: 10px; margin-bottom: 14px; }
 .records-filters label { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid #cbd2cb; background: #fff; }
@@ -251,7 +308,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
 .records-filters select { border: 1px solid #cbd2cb; background: #fff; padding: 7px 9px; font: inherit; }
 .records-answers li { margin-bottom: 8px; border: 1px solid #d9ded8; border-left: 3px solid #b7beb7; background: #fff; }
 .records-answers li.correct { border-left-color: #90b24a; }
-.records-answer__head { display: flex; align-items: center; gap: 14px; padding: 10px 15px; border-bottom: 1px solid #e6e9e5; font-size: 11px; color: #727b75; }
+.records-answer__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 15px; border-bottom: 1px solid #e6e9e5; font-size: 11px; color: #727b75; }
 .records-answer__head strong { margin-left: auto; font-size: 12px; }
 .is-correct { color: #4f7138; }.is-wrong { color: #a65a3d; }
 .records-answer__body { display: grid; grid-template-columns: minmax(100px, 150px) minmax(0, 1fr) minmax(115px, auto); align-items: center; gap: 15px; padding: 14px 15px; }
@@ -260,10 +317,17 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
 .records-answer__values p { margin: 3px 0 0; overflow-wrap: anywhere; }
 .records-answer__result { display: grid; gap: 6px; text-align: right; font-size: 11px; color: #68736e; }.records-answer__result strong { color: #25292b; font-size: 15px; }
 .records-pager--answers { margin: 12px 0 0; border-top: 0; }
-.records-final { border-top: 1px solid #d0d5d1; }
-.records-final li { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border-bottom: 1px solid #dce1da; background: #fff; }.records-final li small { color: #818a84; overflow-wrap: anywhere; }.records-final li b { margin-left: auto; white-space: nowrap; }.records-final__rank { min-width: 35px; color: #678b3e; font-weight: 700; }
+.records-final { border-left: 1px solid #d0d5d1; background: #f8f9f5; }
+.records-final li { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 10px 8px; border-bottom: 1px solid #dce1da; background: #fff; }.records-final li strong { overflow-wrap: anywhere; }.records-final li small { grid-column: 2; grid-row: 2; color: #818a84; overflow-wrap: anywhere; }.records-final li b { grid-column: 3; grid-row: 1 / 3; white-space: nowrap; }.records-final__rank { grid-row: 1 / 3; color: #678b3e; font-weight: 700; }
 .records-empty, .records-placeholder, .records-loading { padding: 24px; color: #78817b; }.records-placeholder { min-height: 50vh; display: grid; place-content: center; justify-items: center; gap: 10px; }
 .records-login { max-width: 400px; margin: 80px auto; padding: 24px; background: #fff; }.records-login h2 { margin-top: 0; font-size: 19px; }.records-login form { display: flex; gap: 8px; }.records-login input { min-width: 0; flex: 1; padding: 10px; border: 1px solid #bac3bd; }.records-login button { border: 0; background: #d9ef72; padding: 0 14px; cursor: pointer; }
-@media (max-width: 760px) { .records-header { padding-inline: 12px; }.records-monitor { font-size: 0; gap: 0; }.records-monitor :deep(svg) { width: 19px; height: 19px; }.records-layout { display: block; height: auto; }.records-list { max-height: 260px; overflow-y: auto; border-right: 0; border-bottom: 1px solid #d0d5d1; }.records-detail { overflow: visible; }.records-summary, .records-events, .records-final { padding: 18px 15px; }.records-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }.records-answer__body { grid-template-columns: minmax(0, 1fr) auto; }.records-answer__values { grid-column: 1 / -1; grid-row: 2; }.records-answer__result { grid-column: 2; grid-row: 1; }.records-answer__head { flex-wrap: wrap; gap: 6px 12px; }.records-answer__head strong { margin-left: auto; } }
+.records-delete-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 16px; background: #141918a8; }
+.records-delete-dialog { position: relative; width: min(100%, 430px); padding: 26px; background: #fff; box-shadow: 0 18px 52px #1117; }
+.records-delete-dialog h2 { margin: 12px 0; font-size: 19px; }.records-delete-dialog p { margin: 8px 0; color: #626c66; overflow-wrap: anywhere; }
+.records-delete-dialog .records-delete-error { color: #9f3d2d; }
+.records-delete-icon { color: #ab533e; }.records-delete-close { position: absolute; top: 12px; right: 12px; border: 0; background: transparent; cursor: pointer; }
+.records-delete-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }.records-delete-actions button { padding: 9px 15px; border: 1px solid #cbd2cb; background: #fff; cursor: pointer; }.records-delete-actions button.danger { border-color: #a64d39; background: #a64d39; color: #fff; }.records-delete-actions button:disabled { opacity: .6; cursor: wait; }
+@media (max-width: 1200px) { .records-answer__body { grid-template-columns: minmax(0, 1fr) auto; }.records-answer__values { grid-column: 1 / -1; grid-row: 2; }.records-answer__result { grid-column: 2; grid-row: 1; } }
+@media (max-width: 760px) { .records-header { padding-inline: 12px; }.records-monitor { font-size: 0; gap: 0; }.records-monitor :deep(svg) { width: 19px; height: 19px; }.records-layout { display: block; height: auto; }.records-list { max-height: 260px; overflow-y: auto; border-right: 0; border-bottom: 1px solid #d0d5d1; }.records-detail { overflow: visible; }.records-detail__inner { height: auto; display: block; }.records-detail__columns { display: block; }.records-summary, .records-events, .records-final { padding: 18px 15px; }.records-events, .records-final { overflow: visible; }.records-final { border-left: 0; border-top: 1px solid #d0d5d1; }.records-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }.records-answer__head { flex-wrap: wrap; gap: 6px 12px; }.records-answer__head strong { margin-left: auto; } }
 @media (max-width: 420px) { .records-answer__values { grid-template-columns: 1fr; }.records-filters { flex-wrap: wrap; }.records-filters select { width: 100%; } }
 </style>

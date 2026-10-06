@@ -50,6 +50,7 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
       const correct = z.enum(["true", "false"]).optional().parse(request.query.correct);
       return audit.detail(String(request.params.id), page, pageSize, search, correct === undefined ? undefined : correct === "true");
     }));
+    router.delete("/games/:id", (request, response) => runAsync(response, () => audit.delete(String(request.params.id))));
   }
   if (live) {
     router.get("/live/state", (_request, response) => run(response, () => live.snapshot()));

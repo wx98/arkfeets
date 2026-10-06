@@ -282,4 +282,6 @@ dist
 
 /server/resource/full_data/*json
 /server/resource/full_data/*png
+/server/live_user_access.json
+/server/live_user_access.json.*.tmp
 .workbuddy/

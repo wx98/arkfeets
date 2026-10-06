@@ -1,6 +1,8 @@
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { connectBilibili, type LiveConfig, type LiveConnection } from "./bilibiliDirectClient.js";
 import { parseBilibiliTextCommand, type BilibiliTextAnswer } from "./bilibiliProtocol.js";
+import { LiveUserAccessStore, type LiveUserStatus } from "./liveUserAccessStore.js";
 
 export interface BilibiliConfig extends LiveConfig {
   uidBlacklist?: Array<string | number>;
@@ -32,12 +34,15 @@ export class BilibiliDanmakuBridge {
   private connected = false;
   private listeningEnabled = false;
   private error = "";
+  private readonly access: LiveUserAccessStore;
 
   constructor(
     private readonly configPath: string,
     private readonly onAnswer: (roomCode: string, answer: BilibiliTextAnswer) => void,
     private readonly onConnectionChange: (roomCode: string, connected: boolean) => void,
-  ) {}
+  ) {
+    this.access = new LiveUserAccessStore(join(dirname(configPath), "live_user_access.json"), this.readConfig());
+  }
 
   get roomCode(): string | undefined { return this.activeRoomCode; }
 
@@ -75,36 +80,31 @@ export class BilibiliDanmakuBridge {
 
   snapshot(): LiveSnapshot {
     const config = this.readConfig();
+    const users = new Map<string, LiveSnapshot["users"][number]>();
+    for (const saved of this.access.getUsers()) users.set(saved.uid, { uid: saved.uid, nickname: saved.nickname, count: 0, lastSeen: 0 });
+    for (const user of this.users.values()) users.set(user.uid, user);
     return {
       roomId: this.connection?.roomId ?? config.roomId ?? 0,
       connected: this.connected,
       listeningEnabled: this.listeningEnabled,
-      error: this.error,
+      error: this.access.getError() || this.error,
       messages: [...this.messages],
-      users: [...this.users.values()].sort((a, b) => b.lastSeen - a.lastSeen),
-      blacklist: (config.uidBlacklist ?? []).map(String),
-      whitelist: (config.uidWhitelist ?? []).map(String),
-      allowlistMode: Boolean(config.allowlistMode),
+      users: [...users.values()].sort((a, b) => b.lastSeen - a.lastSeen),
+      ...this.access.getLists(),
+      allowlistMode: this.access.isAllowlistMode(),
     };
   }
 
-  setAccess(uid: string, status: "normal" | "white" | "black"): LiveSnapshot {
+  setAccess(uid: string, status: LiveUserStatus): LiveSnapshot {
     if (!/^[\w-]{1,100}$/.test(uid)) throw new Error("无效的用户 ID");
-    this.editConfig(config => {
-      const black = new Set((config.uidBlacklist ?? []).map(String));
-      const white = new Set((config.uidWhitelist ?? []).map(String));
-      black.delete(uid); white.delete(uid);
-      if (status === "black") black.add(uid);
-      if (status === "white") white.add(uid);
-      config.uidBlacklist = [...black];
-      config.uidWhitelist = [...white];
-    });
+    const nickname = this.users.get(uid)?.nickname ?? this.access.get(uid)?.nickname ?? uid;
+    this.access.setStatus(uid, nickname, status);
     this.publish();
     return this.snapshot();
   }
 
   setAllowlistMode(enabled: boolean): LiveSnapshot {
-    this.editConfig(config => { config.allowlistMode = enabled; });
+    this.access.setAllowlistMode(enabled);
     this.publish();
     return this.snapshot();
   }
@@ -137,15 +137,6 @@ export class BilibiliDanmakuBridge {
     return value.bilibili;
   }
 
-  private editConfig(change: (config: BilibiliConfig) => void): void {
-    const value = JSON.parse(readFileSync(this.configPath, "utf8")) as { bilibili?: BilibiliConfig };
-    if (!value.bilibili) throw new Error("缺少 bilibili 配置");
-    change(value.bilibili);
-    const temporary = `${this.configPath}.tmp`;
-    writeFileSync(temporary, JSON.stringify(value, null, 2) + "\n");
-    renameSync(temporary, this.configPath);
-  }
-
   private async ensureConnected(): Promise<void> {
     if (!this.listeningEnabled) return;
     if (this.connected) return;
@@ -174,12 +165,7 @@ export class BilibiliDanmakuBridge {
     if (!answer || this.seenIds.has(answer.messageId)) return;
     this.seenIds.add(answer.messageId);
     if (this.seenIds.size > 2_000) this.seenIds.delete(this.seenIds.values().next().value!);
-    let config: BilibiliConfig;
-    try { config = this.readConfig(); }
-    catch { this.error = "无法读取名单配置，弹幕已拒绝"; this.publish(); return; }
-    const black = new Set((config.uidBlacklist ?? []).map(String));
-    const white = new Set((config.uidWhitelist ?? []).map(String));
-    const allowed = !black.has(answer.uid) && (!config.allowlistMode || white.has(answer.uid));
+    const allowed = this.access.isAllowed(answer.uid);
     this.messages.unshift({ ...answer, allowed });
     if (this.messages.length > 100) this.messages.pop();
     const previous = this.users.get(answer.uid);

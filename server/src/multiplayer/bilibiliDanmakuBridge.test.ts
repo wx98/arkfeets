@@ -31,18 +31,26 @@ describe("Bilibili direct protocol", () => {
 });
 
 describe("Bilibili live access lists", () => {
-  it("atomically updates lists without replacing room settings", () => {
+  it("migrates old lists and persists every user action in a separate file", () => {
     const directory = mkdtempSync(join(tmpdir(), "arkfeets-live-"));
     const path = join(directory, "config.json");
-    writeFileSync(path, JSON.stringify({ bilibili: { roomId: 123, authCode: "private-code", uidBlacklist: ["1"] } }));
+    const original = JSON.stringify({ bilibili: { roomId: 123, authCode: "private-code", uidBlacklist: ["1"] } });
+    writeFileSync(path, original);
     try {
       const bridge = new BilibiliDanmakuBridge(path, () => undefined, () => undefined);
       bridge.setAccess("2", "white");
       bridge.setAccess("1", "normal");
       bridge.setAllowlistMode(true);
-      const value = JSON.parse(readFileSync(path, "utf8")).bilibili;
-      expect(value).toMatchObject({ roomId: 123, authCode: "private-code", uidBlacklist: [], uidWhitelist: ["2"], allowlistMode: true });
-      expect(bridge.snapshot()).toMatchObject({ whitelist: ["2"], allowlistMode: true });
+      expect(readFileSync(path, "utf8")).toBe(original);
+      const value = JSON.parse(readFileSync(join(directory, "live_user_access.json"), "utf8"));
+      expect(value).toMatchObject({ version: 1, allowlistMode: true, users: [
+        { uid: "1", status: "normal" }, { uid: "2", status: "white" },
+      ] });
+      const restarted = new BilibiliDanmakuBridge(path, () => undefined, () => undefined);
+      expect(restarted.snapshot()).toMatchObject({ blacklist: [], whitelist: ["2"], allowlistMode: true });
+      expect(restarted.snapshot().users).toEqual(expect.arrayContaining([
+        expect.objectContaining({ uid: "1", count: 0 }), expect.objectContaining({ uid: "2", count: 0 }),
+      ]));
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
@@ -70,5 +78,21 @@ describe("Bilibili live access lists", () => {
       bridge.stop();
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("saves the observed danmaku nickname with the selected access state", () => {
+    const directory = mkdtempSync(join(tmpdir(), "arkfeets-live-nickname-"));
+    const path = join(directory, "config.json");
+    writeFileSync(path, JSON.stringify({ bilibili: { roomId: 123 } }));
+    try {
+      const bridge = new BilibiliDanmakuBridge(path, () => undefined, () => undefined);
+      bridge.setListeningEnabled(true);
+      (bridge as unknown as { onCommand: (command: unknown) => void }).onCommand({
+        cmd: "DANMU_MSG", info: [[0, 0, 0, 0, 1, "message-1"], "答案", ["42", "玩家"]],
+      });
+      bridge.setAccess("42", "black");
+      const file = JSON.parse(readFileSync(join(directory, "live_user_access.json"), "utf8"));
+      expect(file.users).toEqual([expect.objectContaining({ uid: "42", nickname: "玩家", status: "black" })]);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

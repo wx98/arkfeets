@@ -111,14 +111,14 @@ onBeforeUnmount(() => source?.close());
         <p v-if="!snapshot.messages.length" class="live-monitor__empty">等待文字弹幕...</p>
       </section>
       <section class="live-monitor__users">
-        <header><h2>参与用户</h2><small>{{ snapshot.users.length }} 人</small></header>
+        <header><h2>弹幕用户</h2><small>{{ snapshot.users.length }} 人</small></header>
         <div class="live-monitor__filters">
           <label><Search :size="16" /><input v-model="search" placeholder="搜索 UID" aria-label="搜索 UID" /></label>
           <label class="live-monitor__toggle"><input type="checkbox" :checked="snapshot.allowlistMode" @change="toggleAllowlist" />仅白名单</label>
         </div>
         <ol>
           <li v-for="user in users" :key="user.uid">
-            <div><strong>{{ user.nickname }}</strong><small>{{ user.uid }} · {{ user.count }} 条</small></div>
+            <div><strong>{{ user.nickname }}</strong><small>{{ user.uid }} · {{ user.count ? `${user.count} 条` : '已保存' }}</small></div>
             <div class="live-monitor__actions">
               <button title="正常接收" :class="{ active: stateOf(user.uid) === 'normal' }" :disabled="busyUid === user.uid" @click="setAccess(user.uid, 'normal')"><CircleCheck :size="16" /></button>
               <button title="加入白名单" :class="{ active: stateOf(user.uid) === 'white' }" :disabled="busyUid === user.uid" @click="setAccess(user.uid, 'white')"><ShieldCheck :size="16" /></button>

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Cable, Crown, LogOut, Medal, Radio, Send, Timer, Trophy, Users } from "lucide-vue-next";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { ArrowLeft, ArrowRight, Cable, Crown, LogOut, Medal, MessageSquareText, Radio, Send, Timer, Trophy, Users, X } from "lucide-vue-next";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import GameCanvas from "../components/GameCanvas.vue";
 import { getClientSessionId, multiplayerSocket, type ConnectionState } from "../multiplayer/socket";
-import type { MultiplayerRoomView } from "../types";
+import type { LiveDanmakuEvent, MultiplayerRoomView } from "../types";
 
 const route = useRoute();
 const router = useRouter();
@@ -18,10 +18,32 @@ const now = ref(Date.now());
 const roomCode = String(route.params.roomCode);
 const sessionId = getClientSessionId();
 const nickname = localStorage.getItem("arkfeets:nickname") ?? "博士";
+const danmakuSettingsKey = "arkfeets:live-danmaku";
+function loadDanmakuSettings(): { enabled: boolean; density: number; transparency: number } {
+  try {
+    const saved = JSON.parse(localStorage.getItem(danmakuSettingsKey) ?? "{}");
+    return {
+      enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
+      density: Number.isFinite(saved.density) ? Math.max(1, Math.min(5, saved.density)) : 3,
+      transparency: Number.isFinite(saved.transparency) ? Math.max(0, Math.min(80, Math.round(saved.transparency / 10) * 10)) : 20,
+    };
+  } catch { return { enabled: true, density: 3, transparency: 20 }; }
+}
+const savedDanmaku = loadDanmakuSettings();
+const danmakuEnabled = ref(savedDanmaku.enabled);
+const danmakuDensity = ref(savedDanmaku.density);
+const danmakuTransparency = ref(savedDanmaku.transparency);
+const danmakuSettingsOpen = ref(false);
+interface FlyingDanmaku extends LiveDanmakuEvent { lane: number; key: string }
+const flyingDanmaku = ref<FlyingDanmaku[]>([]);
+const laneReadyAt = Array<number>(8).fill(0);
+const cleanupTimers = new Set<number>();
+let danmakuSequence = 0;
 let ticker: number | undefined;
 let offUpdate: (() => void) | undefined;
 let offClosed: (() => void) | undefined;
 let offConnection: (() => void) | undefined;
+let offDanmaku: (() => void) | undefined;
 let connectionWasLost = false;
 let reconnecting = false;
 
@@ -32,6 +54,42 @@ const timerProgress = computed(() => room.value?.question
 const self = computed(() => room.value?.players.find((player) => player.sessionId === sessionId));
 const canAnswer = computed(() => room.value?.answerSource === "WEB" && room.value?.state === "ANSWERING" && (!room.value.question?.overtime || self.value?.isContender));
 const winners = computed(() => room.value?.players.filter((player) => room.value?.winnerSessionIds?.includes(player.sessionId)) ?? []);
+watch([danmakuEnabled, danmakuDensity, danmakuTransparency], () => {
+  localStorage.setItem(danmakuSettingsKey, JSON.stringify({
+    enabled: danmakuEnabled.value, density: danmakuDensity.value, transparency: danmakuTransparency.value,
+  }));
+  if (!danmakuEnabled.value) clearDanmaku();
+});
+watch(() => room.value?.question?.id, (next, previous) => {
+  if (next !== previous) clearDanmaku();
+});
+
+function clearDanmaku() {
+  for (const timer of cleanupTimers) window.clearTimeout(timer);
+  cleanupTimers.clear();
+  laneReadyAt.fill(0);
+  flyingDanmaku.value = [];
+}
+
+function receiveDanmaku(event: LiveDanmakuEvent) {
+  if (!danmakuEnabled.value || event.roomCode !== roomCode.toUpperCase()
+    || event.questionId !== room.value?.question?.id
+    || (room.value.state !== "ANSWERING" && room.value.state !== "REVEAL")) return;
+  const density = danmakuDensity.value;
+  if (flyingDanmaku.value.length >= density * 3) return;
+  const now = Date.now();
+  const laneCount = Math.min(8, 3 + density);
+  const lane = laneReadyAt.slice(0, laneCount).findIndex(ready => ready <= now);
+  if (lane < 0) return;
+  laneReadyAt[lane] = now + 1800 - density * 260;
+  const key = `${event.messageId}-${++danmakuSequence}`;
+  flyingDanmaku.value.push({ ...event, lane, key });
+  const timer = window.setTimeout(() => {
+    cleanupTimers.delete(timer);
+    flyingDanmaku.value = flyingDanmaku.value.filter(item => item.key !== key);
+  }, 11_000);
+  cleanupTimers.add(timer);
+}
 
 onMounted(async () => {
   offUpdate = multiplayerSocket.onUpdate((next) => {
@@ -41,6 +99,7 @@ onMounted(async () => {
       error.value = "";
     }
   });
+  offDanmaku = multiplayerSocket.onDanmaku(receiveDanmaku);
   offClosed = multiplayerSocket.onClosed(async ({ message }) => {
     await router.replace({ path: "/", query: { notice: message } });
   });
@@ -76,6 +135,8 @@ onBeforeUnmount(() => {
   offUpdate?.();
   offClosed?.();
   offConnection?.();
+  offDanmaku?.();
+  clearDanmaku();
 });
 
 async function act(action: () => Promise<MultiplayerRoomView | null>) {
@@ -155,6 +216,21 @@ async function leave() {
           <div class="stage-label"><span>{{ room.question?.overtime ? 'OVERTIME FEED' : 'OPTICAL FEED' }}</span><strong>{{ room.question?.overtime ? 'EX' : 'LIVE' }}</strong></div>
           <div class="canvas-wrap" v-if="room.question">
             <GameCanvas :question="room.question" :reveal="room.reveal" :state="room.state" />
+            <div v-if="room.answerSource === 'BILIBILI' && danmakuEnabled" class="live-danmaku-layer" aria-live="off">
+              <span v-for="item in flyingDanmaku" :key="item.key" class="live-danmaku-item"
+                :style="{ top: `${9 + item.lane * 10}%`, opacity: 1 - danmakuTransparency / 100 }">
+                <strong>{{ item.nickname }}</strong><span>{{ item.content }}</span>
+              </span>
+            </div>
+          </div>
+          <div v-if="room.answerSource === 'BILIBILI'" class="live-danmaku-controls">
+            <div v-if="danmakuSettingsOpen" class="live-danmaku-settings">
+              <div class="live-danmaku-settings__heading"><strong>弹幕设置</strong><button title="关闭设置" aria-label="关闭设置" @click="danmakuSettingsOpen = false"><X :size="16" /></button></div>
+              <label class="live-danmaku-switch"><input v-model="danmakuEnabled" type="checkbox" />显示弹幕</label>
+              <label>密度 <span>{{ danmakuDensity }}</span><input v-model.number="danmakuDensity" type="range" min="1" max="5" step="1" /></label>
+              <label>透明度 <span>{{ danmakuTransparency }}%</span><input v-model.number="danmakuTransparency" type="range" min="0" max="80" step="10" /></label>
+            </div>
+            <button class="live-danmaku-settings-button" title="弹幕设置" aria-label="弹幕设置" :aria-expanded="danmakuSettingsOpen" @click="danmakuSettingsOpen = !danmakuSettingsOpen"><MessageSquareText :size="19" /></button>
           </div>
         </div>
         <aside class="answer-panel multiplayer-panel">
@@ -200,3 +276,23 @@ async function leave() {
     </template>
   </main>
 </template>
+
+<style scoped>
+.live-danmaku-layer { position: absolute; z-index: 3; inset: 0; overflow: hidden; pointer-events: none; }
+.live-danmaku-item { position: absolute; left: 100%; display: inline-flex; align-items: center; gap: 6px; max-width: 80%; width: max-content; white-space: nowrap; padding: 6px 10px; border: 1px solid rgba(217,239,114,.75); background: rgba(13,18,18,.86); color: #fff; font-size: 13px; font-weight: 700; text-shadow: 0 1px 2px #000; animation: live-danmaku-cross 10s linear forwards; }
+.live-danmaku-item strong { color: #d9ef72; }
+.live-danmaku-item span { overflow: hidden; text-overflow: ellipsis; }
+@keyframes live-danmaku-cross { to { transform: translateX(calc(-100vw - 100%)); } }
+.live-danmaku-controls { position: absolute; z-index: 4; left: 18px; bottom: 18px; }
+.live-danmaku-settings-button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 1px solid #9ca5a1; background: #25292b; color: #d9ef72; cursor: pointer; }
+.live-danmaku-settings-button:hover { border-color: #d9ef72; }
+.live-danmaku-settings { position: absolute; bottom: 46px; left: 0; display: grid; gap: 12px; width: 225px; padding: 13px; border: 1px solid #69716e; background: #25292b; box-shadow: 5px 5px 0 #111; color: #fff; font-size: 12px; }
+.live-danmaku-settings__heading { display: flex; align-items: center; justify-content: space-between; }
+.live-danmaku-settings__heading button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: #fff; cursor: pointer; }
+.live-danmaku-settings label { display: grid; grid-template-columns: 1fr auto; gap: 4px; align-items: center; }
+.live-danmaku-settings label input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: #d9ef72; }
+.live-danmaku-settings .live-danmaku-switch { display: flex; gap: 7px; }
+.live-danmaku-settings input[type=checkbox] { accent-color: #d9ef72; }
+@media (max-width: 760px) { .live-danmaku-controls { left: 10px; bottom: 10px; } .live-danmaku-item { font-size: 11px; padding: 4px 7px; } }
+@media (prefers-reduced-motion: reduce) { .live-danmaku-item { left: 10px; animation: live-danmaku-fade 4s linear forwards; } @keyframes live-danmaku-fade { to { opacity: 0; } } }
+</style>

@@ -13,6 +13,7 @@ import { QuestionAdminService } from "./admin/questionAdminService.js";
 import { MultiplayerRoomManager } from "./multiplayer/multiplayerRoomManager.js";
 import { BilibiliDanmakuBridge } from "./multiplayer/bilibiliDanmakuBridge.js";
 import { GameAuditLogger } from "./multiplayer/gameAuditLogger.js";
+import { relayLiveDanmaku } from "./multiplayer/liveDanmakuRelay.js";
 import { managerCallbacks, registerMultiplayerGateway } from "./multiplayer/socketGateway.js";
 import { QuestionRepository } from "./question/questionRepository.js";
 import { SoloSessionManager } from "./solo/soloSessionManager.js";
@@ -70,11 +71,7 @@ const multiplayerRoomManager = new MultiplayerRoomManager(questionRepository, {
 });
 bilibiliBridge = new BilibiliDanmakuBridge(
   join(currentDir, "../config.json"),
-  (roomCode, answer) => {
-    if (multiplayerRoomManager.getActiveBilibiliRoomCode() === roomCode) {
-      multiplayerRoomManager.submitBilibiliAnswer(answer.uid, answer.nickname, answer.answer);
-    }
-  },
+  (roomCode, answer) => relayLiveDanmaku(multiplayerRoomManager, io, roomCode, answer),
   (roomCode, connected) => multiplayerRoomManager.setBilibiliConnection(roomCode, connected),
 );
 app.use("/api/admin", createAdminRoutes(adminSessions, questionAdminService, bilibiliBridge));

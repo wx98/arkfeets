@@ -27,6 +27,15 @@ export interface SoloGameView {
 export type MultiplayerRoomState = "LOBBY" | "ANSWERING" | "REVEAL" | "RANKING";
 export type AnswerSource = "WEB" | "EXTERNAL_API" | "BILIBILI";
 
+export interface LiveDanmakuEvent {
+  roomCode: string;
+  questionId: string;
+  messageId: string;
+  nickname: string;
+  content: string;
+  timestamp: number;
+}
+
 export interface MultiplayerRoomView {
   roomCode: string;
   state: MultiplayerRoomState;

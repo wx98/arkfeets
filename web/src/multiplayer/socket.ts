@@ -1,5 +1,5 @@
 import { io } from "socket.io-client";
-import type { AnswerSource, Difficulty, MultiplayerRoomView } from "../types";
+import type { AnswerSource, Difficulty, LiveDanmakuEvent, MultiplayerRoomView } from "../types";
 
 const socket = io({ autoConnect: true });
 
@@ -42,6 +42,10 @@ export const multiplayerSocket = {
   onUpdate(listener: (room: MultiplayerRoomView) => void) {
     socket.on("room:update", listener);
     return () => socket.off("room:update", listener);
+  },
+  onDanmaku(listener: (event: LiveDanmakuEvent) => void) {
+    socket.on("room:danmaku", listener);
+    return () => socket.off("room:danmaku", listener);
   },
   onClosed(listener: (event: { message: string }) => void) {
     socket.on("room:closed", listener);

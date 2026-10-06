@@ -12,6 +12,7 @@ const room = ref<MultiplayerRoomView>();
 const answer = ref("");
 const error = ref("");
 const loading = ref(true);
+const starting = ref(false);
 const connectionState = ref<ConnectionState>("CONNECTING");
 const now = ref(Date.now());
 const roomCode = String(route.params.roomCode);
@@ -92,6 +93,16 @@ async function submit() {
   answer.value = "";
 }
 
+async function startGame() {
+  if (starting.value) return;
+  starting.value = true;
+  try {
+    await act(() => multiplayerSocket.start(roomCode));
+  } finally {
+    starting.value = false;
+  }
+}
+
 async function leave() {
   try { await multiplayerSocket.leave(roomCode); } catch { /* room may already be gone */ }
   await router.push("/");
@@ -104,7 +115,7 @@ async function leave() {
       <button class="icon-button" title="退出房间" @click="leave"><ArrowLeft :size="20" /></button>
       <div class="room-code"><small>ROOM CODE</small><strong>{{ roomCode.toUpperCase() }}</strong></div>
       <div v-if="room" class="play-stats">
-        <span><Users :size="17" />{{ room.players.length }}/20</span>
+        <span><Users :size="17" />{{ room.players.length }}{{ room.answerSource === 'BILIBILI' ? '' : '/20' }}</span>
         <span><Trophy :size="17" />{{ self?.score ?? 0 }}</span>
         <span v-if="room.state === 'ANSWERING'" :class="{ danger: secondsLeft <= 5 }"><Timer :size="17" />{{ secondsLeft }}s</span>
       </div>
@@ -122,15 +133,17 @@ async function leave() {
         <div class="lobby-brief">
           <p class="eyebrow">SQUAD ASSEMBLY / 小队集结</p>
           <h1>{{ room.roomCode }}</h1>
-          <p>等待队员加入。游戏开始后房间将锁定，最多 20 人。</p>
-          <dl><div><dt>难度</dt><dd>{{ room.difficulty }}</dd></div><div><dt>题目</dt><dd>{{ room.requestedCount }}</dd></div><div><dt>答案来源</dt><dd>{{ room.answerSource === 'EXTERNAL_API' ? 'HTTP API' : 'WEB' }}</dd></div></dl>
-          <button v-if="room.isHost" class="button button--primary lobby-start" @click="act(() => multiplayerSocket.start(roomCode))"><Radio :size="19" />开始抢答</button>
+          <p v-if="room.answerSource === 'BILIBILI'">等待主播开始。直播观众发送文字弹幕后会自动加入计分板。</p>
+          <p v-else>等待队员加入。游戏开始后房间将锁定，最多 20 人。</p>
+          <dl><div><dt>难度</dt><dd>{{ room.difficulty }}</dd></div><div><dt>题目</dt><dd>{{ room.requestedCount }}</dd></div><div><dt>答案来源</dt><dd>{{ room.answerSource === 'BILIBILI' ? 'BILIBILI LIVE' : room.answerSource === 'EXTERNAL_API' ? 'HTTP API' : 'WEB' }}</dd></div></dl>
+          <button v-if="room.isHost" class="button button--primary lobby-start" :disabled="starting" @click="startGame"><Radio :size="19" />{{ starting && room.answerSource === 'BILIBILI' ? '正在连接直播间...' : '开始抢答' }}</button>
           <p v-else class="waiting-copy">等待房主开始...</p>
+          <p v-if="room.answerSource === 'BILIBILI'" class="waiting-copy">直播间来源由服务端配置，开始后接收文字弹幕。</p>
           <p v-if="error" class="error-text">{{ error }}</p>
         </div>
         <div class="player-roster">
-          <div class="roster-title"><span>PLAYERS</span><strong>{{ room.players.length }} / 20</strong></div>
-          <ol><li v-for="(player, index) in room.players" :key="player.sessionId" :class="{ offline: !player.connected }"><span>{{ String(index + 1).padStart(2, '0') }}</span><strong>{{ player.nickname }}</strong><Crown v-if="player.isHost" :size="15" /><small>{{ player.source === 'EXTERNAL' ? 'API' : (player.connected ? 'READY' : 'OFFLINE') }}</small></li></ol>
+          <div class="roster-title"><span>PLAYERS</span><strong>{{ room.players.length }}{{ room.answerSource === 'BILIBILI' ? '' : ' / 20' }}</strong></div>
+          <ol><li v-for="(player, index) in room.players" :key="player.sessionId" :class="{ offline: !player.connected }"><span>{{ String(index + 1).padStart(2, '0') }}</span><strong>{{ player.nickname }}</strong><Crown v-if="player.isHost" :size="15" /><small>{{ player.source === 'EXTERNAL' ? 'API' : player.source === 'BILIBILI' ? 'LIVE' : (player.connected ? 'READY' : 'OFFLINE') }}</small></li></ol>
         </div>
       </section>
     </template>
@@ -151,7 +164,12 @@ async function leave() {
           </div>
 
           <template v-if="room.state === 'ANSWERING'">
-            <template v-if="room.answerSource === 'EXTERNAL_API'">
+            <template v-if="room.answerSource === 'BILIBILI'">
+              <div><p class="eyebrow">BILIBILI LIVE / 直播弹幕</p><h2>{{ room.bilibiliConnected ? '弹幕抢答中' : '弹幕连接中断' }}</h2></div>
+              <div class="external-api-console"><Radio :size="22" /><span>{{ room.bilibiliConnected ? 'LIVE' : 'RECONNECTING' }}</span><strong>文字弹幕作为答案</strong></div>
+              <p class="spectator-copy">按 UID 计分，昵称显示在计分板；连接恢复后继续接收。</p>
+            </template>
+            <template v-else-if="room.answerSource === 'EXTERNAL_API'">
               <div><p class="eyebrow">EXTERNAL LINK / 外部接入</p><h2>接口监听中</h2></div>
               <div class="external-api-console"><Cable :size="22" /><span>POST</span><code>/api/game/submit-answer</code><pre>{ "userName": "玩家名", "answer": "答案" }</pre></div>
               <p class="spectator-copy">收到的昵称会自动加入计分板，无需携带房间号。</p>

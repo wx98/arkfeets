@@ -2,6 +2,7 @@ import type { Server, Socket } from "socket.io";
 import { z } from "zod";
 import { difficulties } from "../question/types.js";
 import { type AnswerSource, type MultiplayerRoomManager } from "./multiplayerRoomManager.js";
+import type { BilibiliDanmakuBridge } from "./bilibiliDanmakuBridge.js";
 
 const roomCodeSchema = z.string().min(2).max(20);
 const identitySchema = z.object({ sessionId: z.string().min(8).max(100), nickname: z.string().trim().min(1).max(20) });
@@ -10,14 +11,15 @@ const createSchema = identitySchema.extend({
   roomCode: roomCodeSchema,
   difficulty: z.enum(difficulties),
   requestedCount: z.union([z.literal(20), z.literal(50), z.literal(100)]),
-  answerSource: z.enum(["WEB", "EXTERNAL_API"] satisfies [AnswerSource, AnswerSource]),
+  answerSource: z.enum(["WEB", "EXTERNAL_API", "BILIBILI"] satisfies [AnswerSource, AnswerSource, AnswerSource]),
 });
 const joinSchema = identitySchema.extend({ roomCode: roomCodeSchema });
 const answerSchema = z.object({ roomCode: roomCodeSchema, answer: z.string().max(100) });
 
 type Ack = (response: { ok: true; room: unknown } | { ok: false; message: string }) => void;
 
-export function registerMultiplayerGateway(io: Server, manager: MultiplayerRoomManager): void {
+export function registerMultiplayerGateway(io: Server, manager: MultiplayerRoomManager, bilibiliBridge?: BilibiliDanmakuBridge): void {
+  const startingRooms = new Set<string>();
   io.on("connection", (socket) => {
     socket.emit("server:ready", { connectedAt: Date.now() });
 
@@ -35,10 +37,26 @@ export function registerMultiplayerGateway(io: Server, manager: MultiplayerRoomM
       return view;
     }));
 
-    socket.on("room:start", (payload, ack: Ack) => run(socket, ack, () => {
-      const input = roomSchema.parse(payload);
-      return manager.start(input.roomCode, requireSession(socket));
-    }));
+    socket.on("room:start", async (payload, ack: Ack) => {
+      let roomCode: string | undefined;
+      try {
+        const input = roomSchema.parse(payload);
+        roomCode = input.roomCode.toUpperCase();
+        manager.assertCanStart(roomCode, requireSession(socket));
+        if (startingRooms.has(roomCode)) throw new Error("正在连接直播间，请稍候");
+        startingRooms.add(roomCode);
+        if (manager.getAnswerSource(roomCode) === "BILIBILI") {
+          if (!bilibiliBridge) throw new Error("直播间弹幕服务未配置");
+          await bilibiliBridge.start(roomCode);
+        }
+        ack({ ok: true, room: manager.start(roomCode, requireSession(socket)) });
+      } catch (error) {
+        if (roomCode && bilibiliBridge?.roomCode === roomCode && !manager.getActiveBilibiliRoomCode()) bilibiliBridge.stop();
+        ack({ ok: false, message: error instanceof Error ? error.message : "启动失败" });
+      } finally {
+        if (roomCode) startingRooms.delete(roomCode);
+      }
+    });
     socket.on("room:answer", (payload, ack: Ack) => run(socket, ack, () => {
       const input = answerSchema.parse(payload);
       return manager.answer(input.roomCode, requireSession(socket), input.answer).view;

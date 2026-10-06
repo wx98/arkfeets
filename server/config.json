@@ -1,4 +1,10 @@
 {
   "adminPassword": "arkfeets-admin",
-  "adminSessionHours": 8
+  "adminSessionHours": 8,
+  "bilibili": {
+    "blivechatWsUrl": "ws://127.0.0.1:12450/api/chat",
+    "roomId": 0,
+    "authCode": "",
+    "uidBlacklist": []
+  }
 }

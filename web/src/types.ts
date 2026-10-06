@@ -25,7 +25,7 @@ export interface SoloGameView {
 }
 
 export type MultiplayerRoomState = "LOBBY" | "ANSWERING" | "REVEAL" | "RANKING";
-export type AnswerSource = "WEB" | "EXTERNAL_API";
+export type AnswerSource = "WEB" | "EXTERNAL_API" | "BILIBILI";
 
 export interface MultiplayerRoomView {
   roomCode: string;
@@ -34,6 +34,7 @@ export interface MultiplayerRoomView {
   difficulty: Difficulty;
   requestedCount: number;
   answerSource: AnswerSource;
+  bilibiliConnected?: boolean;
   players: Array<{
     sessionId: string;
     nickname: string;
@@ -41,7 +42,7 @@ export interface MultiplayerRoomView {
     connected: boolean;
     isHost: boolean;
     isContender: boolean;
-    source: "WEB" | "EXTERNAL";
+    source: "WEB" | "EXTERNAL" | "BILIBILI";
   }>;
   question?: {
     id: string;

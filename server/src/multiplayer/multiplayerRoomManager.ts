@@ -3,7 +3,7 @@ import type { Difficulty, Question } from "../question/types.js";
 import type { QuestionRepository } from "../question/questionRepository.js";
 
 export type MultiplayerRoomState = "LOBBY" | "ANSWERING" | "REVEAL" | "RANKING";
-export type AnswerSource = "WEB" | "EXTERNAL_API";
+export type AnswerSource = "WEB" | "EXTERNAL_API" | "BILIBILI";
 
 export interface MultiplayerRoomView {
   roomCode: string;
@@ -12,6 +12,7 @@ export interface MultiplayerRoomView {
   difficulty: Difficulty;
   requestedCount: number;
   answerSource: AnswerSource;
+  bilibiliConnected?: boolean;
   players: Array<{
     sessionId: string;
     nickname: string;
@@ -19,7 +20,7 @@ export interface MultiplayerRoomView {
     connected: boolean;
     isHost: boolean;
     isContender: boolean;
-    source: "WEB" | "EXTERNAL";
+    source: "WEB" | "EXTERNAL" | "BILIBILI";
   }>;
   question?: {
     id: string;
@@ -46,7 +47,7 @@ interface Player {
   score: number;
   connected: boolean;
   joinedAt: number;
-  source: "WEB" | "EXTERNAL";
+  source: "WEB" | "EXTERNAL" | "BILIBILI";
 }
 
 interface Room {
@@ -55,6 +56,7 @@ interface Room {
   difficulty: Difficulty;
   requestedCount: number;
   answerSource: AnswerSource;
+  bilibiliConnected: boolean;
   state: MultiplayerRoomState;
   players: Map<string, Player>;
   questions: Question[];
@@ -88,6 +90,7 @@ const defaultDurations: Record<Difficulty, number> = {
 export class MultiplayerRoomManager {
   private readonly rooms = new Map<string, Room>();
   private activeExternalRoomCode?: string;
+  private activeBilibiliRoomCode?: string;
   private readonly durations: Record<Difficulty, number>;
   private readonly rankingDurationMs: number;
   private readonly onRoomUpdated: (roomCode: string) => void;
@@ -112,6 +115,7 @@ export class MultiplayerRoomManager {
       difficulty: input.difficulty,
       requestedCount: input.requestedCount,
       answerSource: input.answerSource ?? "WEB",
+      bilibiliConnected: false,
       state: "LOBBY",
       players: new Map(),
       questions: [],
@@ -146,8 +150,7 @@ export class MultiplayerRoomManager {
 
   start(roomCode: string, sessionId: string) {
     const room = this.getRoom(roomCode);
-    this.assertHost(room, sessionId);
-    if (room.state !== "LOBBY") throw new Error("当前不能开始游戏");
+    this.assertCanStart(roomCode, sessionId);
     if (room.answerSource === "EXTERNAL_API" && this.activeExternalRoomCode && this.activeExternalRoomCode !== room.code) {
       throw new Error(`外部答案接口正被房间 ${this.activeExternalRoomCode} 使用`);
     }
@@ -161,12 +164,14 @@ export class MultiplayerRoomManager {
     for (const player of room.players.values()) player.score = 0;
     room.contenderSessionIds = new Set(room.players.keys());
     if (room.answerSource === "EXTERNAL_API") this.activeExternalRoomCode = room.code;
+    if (room.answerSource === "BILIBILI") this.activeBilibiliRoomCode = room.code;
     this.beginQuestion(room);
     return this.toView(room, sessionId);
   }
 
-  answer(roomCode: string, sessionId: string, answer: string) {
+  answer(roomCode: string, sessionId: string, answer: string, source: "WEB" | "EXTERNAL_API" = "WEB") {
     const room = this.getRoom(roomCode);
+    if (room.answerSource !== source) throw new Error("当前房间不接受网页答案");
     const player = this.getPlayer(room, sessionId);
     if (room.state !== "ANSWERING") throw new Error("当前题已结束");
     if (room.overtime && !room.contenderSessionIds.has(sessionId)) throw new Error("加时赛仅限并列玩家作答");
@@ -206,7 +211,7 @@ export class MultiplayerRoomManager {
       this.changed(room);
     }
 
-    const result = this.answer(room.code, sessionId, answer);
+    const result = this.answer(room.code, sessionId, answer, "EXTERNAL_API");
     return {
       accepted: true,
       correct: result.correct,
@@ -214,6 +219,56 @@ export class MultiplayerRoomManager {
       userName: player.nickname,
       score: player.score,
     };
+  }
+
+  assertCanStart(roomCode: string, sessionId: string): void {
+    const room = this.getRoom(roomCode);
+    this.assertHost(room, sessionId);
+    if (room.state !== "LOBBY") throw new Error("当前不能开始游戏");
+    if (room.answerSource === "BILIBILI" && this.activeBilibiliRoomCode && this.activeBilibiliRoomCode !== room.code) {
+      throw new Error("已有直播间游戏正在进行");
+    }
+  }
+
+  getAnswerSource(roomCode: string): AnswerSource {
+    return this.getRoom(roomCode).answerSource;
+  }
+
+  getActiveBilibiliRoomCode(): string | undefined {
+    return this.activeBilibiliRoomCode;
+  }
+
+  setBilibiliConnection(roomCode: string, connected: boolean): void {
+    const room = this.rooms.get(normalizeRoomCode(roomCode));
+    if (!room || room.answerSource !== "BILIBILI" || room.bilibiliConnected === connected) return;
+    room.bilibiliConnected = connected;
+    this.changed(room);
+  }
+
+  submitBilibiliAnswer(uid: string, nickname: string, answer: string): boolean {
+    const roomCode = this.activeBilibiliRoomCode;
+    if (!roomCode) return false;
+    const room = this.getRoom(roomCode);
+    if (room.state !== "ANSWERING" || !room.bilibiliConnected || Date.now() >= room.endsAt) return false;
+    const sessionId = `bilibili:${uid}`;
+    if (room.overtime && !room.contenderSessionIds.has(sessionId)) return false;
+    let player = room.players.get(sessionId);
+    if (!player) {
+      player = createPlayer(sessionId, nickname, "BILIBILI");
+      room.players.set(sessionId, player);
+      this.changed(room);
+    } else if (player.nickname !== nickname) {
+      player.nickname = nickname;
+      this.changed(room);
+    }
+    const normalized = (value: string) => value.trim().toLocaleLowerCase();
+    if (!normalized(answer) || !this.currentQuestion(room).answers.some((valid) => normalized(valid) === normalized(answer))) return false;
+    this.clearTimer(room);
+    player.score += 1;
+    room.state = "REVEAL";
+    room.roundWinnerSessionId = sessionId;
+    this.changed(room);
+    return true;
   }
 
   next(roomCode: string, sessionId: string) {
@@ -266,6 +321,7 @@ export class MultiplayerRoomManager {
     for (const room of this.rooms.values()) this.clearTimer(room);
     this.rooms.clear();
     this.activeExternalRoomCode = undefined;
+    this.activeBilibiliRoomCode = undefined;
   }
 
   private beginQuestion(room: Room): void {
@@ -321,6 +377,7 @@ export class MultiplayerRoomManager {
     this.clearTimer(room);
     room.state = "RANKING";
     this.releaseExternalRoom(room);
+    this.releaseBilibiliRoom(room);
     room.winnerSessionIds = winnerSessionIds;
     room.rankingEndsAt = Date.now() + this.rankingDurationMs;
     room.timer = setTimeout(() => this.resetToLobby(room), this.rankingDurationMs);
@@ -332,8 +389,9 @@ export class MultiplayerRoomManager {
     this.clearTimer(room);
     room.state = "LOBBY";
     this.releaseExternalRoom(room);
+    this.releaseBilibiliRoom(room);
     for (const [sessionId, player] of room.players) {
-      if (player.source === "EXTERNAL") room.players.delete(sessionId);
+      if (player.source === "EXTERNAL" || player.source === "BILIBILI") room.players.delete(sessionId);
     }
     room.questions = [];
     room.currentIndex = 0;
@@ -371,6 +429,7 @@ export class MultiplayerRoomManager {
       difficulty: room.difficulty,
       requestedCount: room.requestedCount,
       answerSource: room.answerSource,
+      bilibiliConnected: room.answerSource === "BILIBILI" ? room.bilibiliConnected : undefined,
       players: [...room.players.values()]
         .sort((left, right) => right.score - left.score || left.joinedAt - right.joinedAt)
         .map((player) => ({
@@ -436,12 +495,18 @@ export class MultiplayerRoomManager {
   private destroyRoom(room: Room, message: string): void {
     this.clearTimer(room);
     this.releaseExternalRoom(room);
+    this.releaseBilibiliRoom(room);
     this.rooms.delete(room.code);
     this.onRoomClosed(room.code, message);
   }
 
   private releaseExternalRoom(room: Room): void {
     if (this.activeExternalRoomCode === room.code) this.activeExternalRoomCode = undefined;
+  }
+
+  private releaseBilibiliRoom(room: Room): void {
+    if (this.activeBilibiliRoomCode === room.code) this.activeBilibiliRoomCode = undefined;
+    room.bilibiliConnected = false;
   }
 }
 
@@ -462,6 +527,6 @@ function normalizeExternalName(value: string): string {
   return normalized;
 }
 
-function createPlayer(sessionId: string, nickname: string, source: "WEB" | "EXTERNAL" = "WEB"): Player {
+function createPlayer(sessionId: string, nickname: string, source: "WEB" | "EXTERNAL" | "BILIBILI" = "WEB"): Player {
   return { sessionId, nickname: nickname.trim(), score: 0, connected: true, joinedAt: Date.now(), source };
 }

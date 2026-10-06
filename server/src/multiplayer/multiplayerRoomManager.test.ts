@@ -115,6 +115,33 @@ describe("MultiplayerRoomManager", () => {
     expect(() => manager.submitExternalAnswer("外部玩家", "答案1")).toThrow("当前没有活动的外部接口房间");
   });
 
+  it("scores Bilibili text by UID and ignores case and surrounding whitespace", () => {
+    const manager = createManager(2, {}, "Amiya");
+    manager.createRoom({ roomCode: "live", ...host, difficulty: "medium", requestedCount: 20, answerSource: "BILIBILI" });
+    manager.start("live", host.sessionId);
+    manager.setBilibiliConnection("LIVE", true);
+    expect(() => manager.answer("live", host.sessionId, "答案1")).toThrow("不接受网页答案");
+    expect(manager.submitBilibiliAnswer("42", "同名", " 错误 ")).toBe(false);
+    expect(manager.submitBilibiliAnswer("43", "同名", "错误")).toBe(false);
+    expect(manager.getView("live", host.sessionId).players.filter((player) => player.source === "BILIBILI")).toHaveLength(2);
+    expect(manager.submitBilibiliAnswer("42", "新昵称", " aMIYa ")).toBe(true);
+    const view = manager.getView("live", host.sessionId);
+    expect(view.reveal?.winnerNickname).toBe("新昵称");
+    expect(view.players.find((player) => player.sessionId === "bilibili:42")?.score).toBe(1);
+    expect(view.players.find((player) => player.sessionId === "bilibili:43")?.score).toBe(0);
+    manager.dispose();
+  });
+
+  it("does not accept live answers while disconnected", () => {
+    const manager = createManager(1);
+    manager.createRoom({ roomCode: "live", ...host, difficulty: "medium", requestedCount: 20, answerSource: "BILIBILI" });
+    manager.start("live", host.sessionId);
+    expect(manager.submitBilibiliAnswer("42", "玩家", "答案1")).toBe(false);
+    manager.setBilibiliConnection("LIVE", true);
+    expect(manager.submitBilibiliAnswer("42", "玩家", "答案1")).toBe(true);
+    manager.dispose();
+  });
+
   it("reuses the same external player after whitespace normalization", () => {
     const manager = createManager(3);
     manager.createRoom({ roomCode: "api", ...host, difficulty: "medium", requestedCount: 20, answerSource: "EXTERNAL_API" });
@@ -129,10 +156,10 @@ describe("MultiplayerRoomManager", () => {
   });
 });
 
-function createManager(count: number, options: ConstructorParameters<typeof MultiplayerRoomManager>[1] = {}) {
+function createManager(count: number, options: ConstructorParameters<typeof MultiplayerRoomManager>[1] = {}, firstAnswer?: string) {
   const questions = Array.from({ length: count }, (_, index): Question => ({
     id: String(index + 1),
-    answers: [`答案${index + 1}`],
+    answers: [index === 0 && firstAnswer ? firstAnswer : `答案${index + 1}`],
     difficulty: ["medium"],
     tags: [],
     originalImageUrl: `/full-data/image-${index + 1}.png`,

@@ -11,6 +11,7 @@ import { createAdminRoutes } from "./api/adminRoutes.js";
 import { AdminSessionManager } from "./admin/adminSessionManager.js";
 import { QuestionAdminService } from "./admin/questionAdminService.js";
 import { MultiplayerRoomManager } from "./multiplayer/multiplayerRoomManager.js";
+import { BilibiliDanmakuBridge } from "./multiplayer/bilibiliDanmakuBridge.js";
 import { managerCallbacks, registerMultiplayerGateway } from "./multiplayer/socketGateway.js";
 import { QuestionRepository } from "./question/questionRepository.js";
 import { SoloSessionManager } from "./solo/soloSessionManager.js";
@@ -33,6 +34,7 @@ const questionRepository = new QuestionRepository(resourceDirectory);
 const soloSessionManager = new SoloSessionManager(questionRepository);
 const adminSessions = new AdminSessionManager(config.adminPassword, (config.adminSessionHours ?? 8) * 60 * 60 * 1000);
 const questionAdminService = new QuestionAdminService(resourceDirectory, questionRepository);
+let bilibiliBridge: BilibiliDanmakuBridge;
 
 app.use("/full-data", express.static(join(resourceDirectory, "full_data")));
 app.use("/api/solo", createSoloRoutes(soloSessionManager));
@@ -50,10 +52,28 @@ const io = new Server(httpServer, {
   cors: { origin: true, credentials: true },
 });
 const multiplayerRoomManager = new MultiplayerRoomManager(questionRepository, {
-  onRoomUpdated: (roomCode) => managerCallbacks.get(multiplayerRoomManager)?.update(roomCode),
-  onRoomClosed: (roomCode, message) => managerCallbacks.get(multiplayerRoomManager)?.close(roomCode, message),
+  onRoomUpdated: (roomCode) => {
+    if (bilibiliBridge?.roomCode === roomCode && !multiplayerRoomManager.getActiveBilibiliRoomCode()) {
+      const view = multiplayerRoomManager.getView(roomCode, "");
+      if (view.state === "RANKING") bilibiliBridge.stop();
+    }
+    managerCallbacks.get(multiplayerRoomManager)?.update(roomCode);
+  },
+  onRoomClosed: (roomCode, message) => {
+    if (bilibiliBridge?.roomCode === roomCode) bilibiliBridge.stop();
+    managerCallbacks.get(multiplayerRoomManager)?.close(roomCode, message);
+  },
 });
-registerMultiplayerGateway(io, multiplayerRoomManager);
+bilibiliBridge = new BilibiliDanmakuBridge(
+  join(currentDir, "../config.json"),
+  (roomCode, answer) => {
+    if (multiplayerRoomManager.getActiveBilibiliRoomCode() === roomCode) {
+      multiplayerRoomManager.submitBilibiliAnswer(answer.uid, answer.nickname, answer.answer);
+    }
+  },
+  (roomCode, connected) => multiplayerRoomManager.setBilibiliConnection(roomCode, connected),
+);
+registerMultiplayerGateway(io, multiplayerRoomManager, bilibiliBridge);
 app.use("/api/game", createGameRoutes(multiplayerRoomManager));
 
 app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {

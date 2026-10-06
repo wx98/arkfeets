@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Cable, LogIn, Radio, Users } from "lucide-vue-next";
+import { ArrowLeft, Cable, LogIn, Radio, Tv, Users } from "lucide-vue-next";
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { getClientSessionId, multiplayerSocket } from "../multiplayer/socket";
@@ -82,6 +82,7 @@ async function enter(mode: "create" | "join") {
             <div class="source-selector">
               <label :class="{ active: answerSource === 'WEB' }"><input v-model="answerSource" type="radio" value="WEB" /><Users :size="17" /><span>网页抢答<small>WEB CLIENT</small></span></label>
               <label :class="{ active: answerSource === 'EXTERNAL_API' }"><input v-model="answerSource" type="radio" value="EXTERNAL_API" /><Cable :size="17" /><span>外部接口<small>HTTP API</small></span></label>
+              <label :class="{ active: answerSource === 'BILIBILI' }"><input v-model="answerSource" type="radio" value="BILIBILI" /><Tv :size="17" /><span>直播弹幕<small>BILIBILI LIVE</small></span></label>
             </div>
           </fieldset>
           <button class="button button--primary" :disabled="busy" @click="enter('create')"><Users :size="19" />创建并等待队员</button>

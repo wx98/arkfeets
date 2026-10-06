@@ -5,10 +5,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 interface Message { uid: string; nickname: string; answer: string; messageId: string; timestamp: number; allowed: boolean }
 interface LiveUser { uid: string; nickname: string; count: number; lastSeen: number }
 interface Snapshot {
-  roomId: number; connected: boolean; error: string; messages: Message[]; users: LiveUser[];
+  roomId: number; connected: boolean; listeningEnabled: boolean; error: string; messages: Message[]; users: LiveUser[];
   blacklist: string[]; whitelist: string[]; allowlistMode: boolean;
 }
-const snapshot = ref<Snapshot>({ roomId: 0, connected: false, error: "", messages: [], users: [], blacklist: [], whitelist: [], allowlistMode: false });
+const snapshot = ref<Snapshot>({ roomId: 0, connected: false, listeningEnabled: true, error: "", messages: [], users: [], blacklist: [], whitelist: [], allowlistMode: false });
 const loginRequired = ref(false);
 const password = ref("");
 const error = ref("");
@@ -63,6 +63,10 @@ async function toggleAllowlist() {
   try { snapshot.value = await request("allowlist", "PUT", { enabled: !snapshot.value.allowlistMode }); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : "模式更新失败"; }
 }
+async function toggleListening() {
+  try { snapshot.value = await request("listening", "PUT", { enabled: !snapshot.value.listeningEnabled }); }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : "监听状态更新失败"; }
+}
 onMounted(() => { void connect(); });
 onBeforeUnmount(() => source?.close());
 </script>
@@ -71,8 +75,9 @@ onBeforeUnmount(() => source?.close());
   <main class="live-monitor">
     <header class="live-monitor__header">
       <a href="/multi" class="live-monitor__back" title="返回多人房间"><ArrowLeft :size="20" /></a>
-      <div><small>BILIBILI LIVE / 弹幕监控</small><h1>直播间 {{ snapshot.roomId || "未连接" }}</h1></div>
-      <span :class="['live-monitor__status', { connected: snapshot.connected }]"><Radio :size="15" />{{ snapshot.connected ? "正在接收" : "连接中断" }}</span>
+      <div><small>BILIBILI LIVE / 弹幕监控</small><h1><a v-if="snapshot.roomId > 0" :href="`https://live.bilibili.com/${snapshot.roomId}`" target="_blank" rel="noopener noreferrer" title="打开 Bilibili 直播间">直播间 {{ snapshot.roomId }}</a><span v-else>直播间 未连接</span></h1></div>
+      <label v-if="!loginRequired" class="live-monitor__listening"><input type="checkbox" :checked="snapshot.listeningEnabled" @change="toggleListening" />监听弹幕</label>
+      <span :class="['live-monitor__status', { connected: snapshot.connected }]"><Radio :size="15" />{{ snapshot.connected ? "正在接收" : snapshot.listeningEnabled ? "连接中断" : "已暂停" }}</span>
     </header>
     <p v-if="snapshot.error || error" class="live-monitor__error" role="alert">{{ snapshot.error || error }}</p>
     <section v-if="loginRequired" class="live-monitor__login">
@@ -118,9 +123,13 @@ onBeforeUnmount(() => source?.close());
 .live-monitor { min-height: 100dvh; background: #f2f3ef; color: #25292b; }
 .live-monitor__header { height: 86px; display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: #25292b; color: #fff; }
 .live-monitor__header h1 { margin: 2px 0 0; font-size: 23px; }
+.live-monitor__header h1 a { color: inherit; text-decoration: underline; text-decoration-color: #a7bb5f; text-underline-offset: 4px; }
+.live-monitor__header h1 a:hover { color: #d9ef72; }
 .live-monitor__header small { color: #b8c1be; font-size: 10px; }
 .live-monitor__back { display: grid; place-items: center; width: 36px; height: 36px; color: inherit; border: 1px solid #68706e; }
 .live-monitor__status { margin-left: auto; display: flex; align-items: center; gap: 7px; color: #f0ae60; }
+.live-monitor__listening { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.live-monitor__listening + .live-monitor__status { margin-left: 8px; }
 .live-monitor__status.connected { color: #d9ef72; }
 .live-monitor__error { margin: 0; padding: 9px 24px; background: #ffebdb; color: #8c4026; }
 .live-monitor__columns { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(330px, 1fr); height: calc(100dvh - 86px); }

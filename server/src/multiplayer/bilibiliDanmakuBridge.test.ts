@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliCompressSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BilibiliDanmakuBridge } from "./bilibiliDanmakuBridge.js";
 import { decodeBilibiliPackets, makeBilibiliPacket, parseBilibiliTextCommand } from "./bilibiliProtocol.js";
 
@@ -44,5 +44,28 @@ describe("Bilibili live access lists", () => {
       expect(value).toMatchObject({ roomId: 123, authCode: "private-code", uidBlacklist: [], uidWhitelist: ["2"], allowlistMode: true });
       expect(bridge.snapshot()).toMatchObject({ whitelist: ["2"], allowlistMode: true });
     } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("persists listening state and blocks a live game while disabled", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "arkfeets-listening-"));
+    const path = join(directory, "config.json");
+    writeFileSync(path, JSON.stringify({ bilibili: { roomId: 123, listeningEnabled: false } }));
+    const changed = vi.fn();
+    const bridge = new BilibiliDanmakuBridge(path, () => undefined, changed);
+    try {
+      const release = await bridge.acquireMonitor(() => undefined);
+      expect(bridge.snapshot()).toMatchObject({ listeningEnabled: false, connected: false });
+      await expect(bridge.start("LIVE")).rejects.toThrow("监听已关闭");
+      release();
+      bridge.setListeningEnabled(true);
+      expect(JSON.parse(readFileSync(path, "utf8")).bilibili.listeningEnabled).toBe(true);
+      Object.assign(bridge, { activeRoomCode: "LIVE", connected: true, connection: { roomId: 123, close: vi.fn() } });
+      bridge.setListeningEnabled(false);
+      expect(bridge.snapshot()).toMatchObject({ listeningEnabled: false, connected: false });
+      expect(changed).toHaveBeenCalledWith("LIVE", false);
+    } finally {
+      bridge.stop();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

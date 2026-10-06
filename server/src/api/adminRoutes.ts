@@ -58,6 +58,10 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
       const enabled = z.boolean().parse(request.body?.enabled);
       return live.setAllowlistMode(enabled);
     }));
+    router.put("/live/listening", (request, response) => run(response, () => {
+      const enabled = z.boolean().parse(request.body?.enabled);
+      return live.setListeningEnabled(enabled);
+    }));
   }
   router.post("/logout", (request, response) => {
     sessions.logout(readAdminToken(request.headers.authorization, request.headers.cookie));

@@ -3,6 +3,7 @@ import { connectBilibili, type LiveConfig, type LiveConnection } from "./bilibil
 import { parseBilibiliTextCommand, type BilibiliTextAnswer } from "./bilibiliProtocol.js";
 
 export interface BilibiliConfig extends LiveConfig {
+  listeningEnabled?: boolean;
   uidBlacklist?: Array<string | number>;
   uidWhitelist?: Array<string | number>;
   allowlistMode?: boolean;
@@ -11,6 +12,7 @@ export interface BilibiliConfig extends LiveConfig {
 export interface LiveSnapshot {
   roomId: number;
   connected: boolean;
+  listeningEnabled: boolean;
   error: string;
   messages: Array<BilibiliTextAnswer & { allowed: boolean }>;
   users: Array<{ uid: string; nickname: string; count: number; lastSeen: number }>;
@@ -41,9 +43,11 @@ export class BilibiliDanmakuBridge {
 
   async start(roomCode: string): Promise<void> {
     if (this.activeRoomCode) throw new Error("已有直播间正在接收弹幕");
+    if (this.readConfig().listeningEnabled === false) throw new Error("直播弹幕监听已关闭，请在监控页开启");
     this.activeRoomCode = roomCode;
     try {
       await this.ensureConnected();
+      if (!this.connected) throw new Error("直播弹幕监听已关闭");
       this.onConnectionChange(roomCode, true);
     } catch (error) {
       this.activeRoomCode = undefined;
@@ -62,7 +66,7 @@ export class BilibiliDanmakuBridge {
   async acquireMonitor(listener: (snapshot: LiveSnapshot) => void): Promise<() => void> {
     this.listeners.add(listener);
     listener(this.snapshot());
-    void this.ensureConnected().catch(() => undefined);
+    if (this.readConfig().listeningEnabled !== false) void this.ensureConnected().catch(() => undefined);
     return () => {
       this.listeners.delete(listener);
       this.maybeClose();
@@ -74,6 +78,7 @@ export class BilibiliDanmakuBridge {
     return {
       roomId: this.connection?.roomId ?? config.roomId ?? 0,
       connected: this.connected,
+      listeningEnabled: config.listeningEnabled !== false,
       error: this.error,
       messages: [...this.messages],
       users: [...this.users.values()].sort((a, b) => b.lastSeen - a.lastSeen),
@@ -104,6 +109,28 @@ export class BilibiliDanmakuBridge {
     return this.snapshot();
   }
 
+  setListeningEnabled(enabled: boolean): LiveSnapshot {
+    this.editConfig(config => { config.listeningEnabled = enabled; });
+    if (!enabled) {
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+      this.connection?.close();
+      this.connection = undefined;
+      this.connected = false;
+      this.error = "直播弹幕监听已关闭";
+      if (this.activeRoomCode) this.onConnectionChange(this.activeRoomCode, false);
+    } else {
+      this.error = "";
+      if (this.activeRoomCode || this.listeners.size) {
+        void this.ensureConnected().then(() => {
+          if (this.activeRoomCode && this.connected) this.onConnectionChange(this.activeRoomCode, true);
+        }).catch(() => undefined);
+      }
+    }
+    this.publish();
+    return this.snapshot();
+  }
+
   private readConfig(): BilibiliConfig {
     const value = JSON.parse(readFileSync(this.configPath, "utf8")) as { bilibili?: BilibiliConfig };
     if (!value.bilibili) throw new Error("请在 server/config.json 中配置 bilibili");
@@ -120,13 +147,14 @@ export class BilibiliDanmakuBridge {
   }
 
   private async ensureConnected(): Promise<void> {
+    if (this.readConfig().listeningEnabled === false) return;
     if (this.connected) return;
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
       const config = this.readConfig();
       if (!config.authCode?.trim() && !config.roomId) throw new Error("请配置 bilibili.authCode 或 bilibili.roomId");
       const connection = await connectBilibili(config, command => this.onCommand(command), message => this.disconnected(message));
-      if (!this.activeRoomCode && !this.listeners.size) { connection.close(); return; }
+      if ((!this.activeRoomCode && !this.listeners.size) || this.readConfig().listeningEnabled === false) { connection.close(); return; }
       this.connection = connection;
       this.connected = true;
       this.error = "";
@@ -134,7 +162,7 @@ export class BilibiliDanmakuBridge {
     })().catch(error => {
       this.error = error instanceof Error ? error.message : "直播弹幕连接失败";
       this.publish();
-      if (this.activeRoomCode || this.listeners.size) this.scheduleReconnect();
+      if ((this.activeRoomCode || this.listeners.size) && this.readConfig().listeningEnabled !== false) this.scheduleReconnect();
       throw error;
     }).finally(() => { this.connecting = undefined; });
     return this.connecting;
@@ -173,7 +201,7 @@ export class BilibiliDanmakuBridge {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer || (!this.activeRoomCode && !this.listeners.size)) return;
+    if (this.reconnectTimer || this.readConfig().listeningEnabled === false || (!this.activeRoomCode && !this.listeners.size)) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       if (this.activeRoomCode || this.listeners.size) void this.ensureConnected().then(() => {

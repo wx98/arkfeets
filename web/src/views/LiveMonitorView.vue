@@ -8,12 +8,13 @@ interface Snapshot {
   roomId: number; connected: boolean; listeningEnabled: boolean; error: string; messages: Message[]; users: LiveUser[];
   blacklist: string[]; whitelist: string[]; allowlistMode: boolean;
 }
-const snapshot = ref<Snapshot>({ roomId: 0, connected: false, listeningEnabled: true, error: "", messages: [], users: [], blacklist: [], whitelist: [], allowlistMode: false });
+const snapshot = ref<Snapshot>({ roomId: 0, connected: false, listeningEnabled: false, error: "", messages: [], users: [], blacklist: [], whitelist: [], allowlistMode: false });
 const loginRequired = ref(false);
 const password = ref("");
 const error = ref("");
 const search = ref("");
 const busyUid = ref("");
+const listeningBusy = ref(false);
 let source: EventSource | undefined;
 const users = computed(() => snapshot.value.users.filter(user => user.uid.toLowerCase().includes(search.value.trim().toLowerCase())));
 function stateOf(uid: string): "normal" | "white" | "black" {
@@ -63,9 +64,16 @@ async function toggleAllowlist() {
   try { snapshot.value = await request("allowlist", "PUT", { enabled: !snapshot.value.allowlistMode }); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : "模式更新失败"; }
 }
-async function toggleListening() {
-  try { snapshot.value = await request("listening", "PUT", { enabled: !snapshot.value.listeningEnabled }); }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : "监听状态更新失败"; }
+async function toggleListening(event: Event) {
+  if (listeningBusy.value) return;
+  const input = event.target as HTMLInputElement;
+  listeningBusy.value = true;
+  try { snapshot.value = await request("listening", "PUT", { enabled: input.checked }); }
+  catch (cause) {
+    input.checked = snapshot.value.listeningEnabled;
+    error.value = cause instanceof Error ? cause.message : "监听状态更新失败";
+  }
+  finally { listeningBusy.value = false; }
 }
 onMounted(() => { void connect(); });
 onBeforeUnmount(() => source?.close());
@@ -76,7 +84,11 @@ onBeforeUnmount(() => source?.close());
     <header class="live-monitor__header">
       <a href="/multi" class="live-monitor__back" title="返回多人房间"><ArrowLeft :size="20" /></a>
       <div><small>BILIBILI LIVE / 弹幕监控</small><h1><a v-if="snapshot.roomId > 0" :href="`https://live.bilibili.com/${snapshot.roomId}`" target="_blank" rel="noopener noreferrer" title="打开 Bilibili 直播间">直播间 {{ snapshot.roomId }}</a><span v-else>直播间 未连接</span></h1></div>
-      <label v-if="!loginRequired" class="live-monitor__listening"><input type="checkbox" :checked="snapshot.listeningEnabled" @change="toggleListening" />监听弹幕</label>
+      <label v-if="!loginRequired" class="live-monitor__listening">
+        <span>监听弹幕</span>
+        <input class="live-monitor__switch-input" type="checkbox" role="switch" :checked="snapshot.listeningEnabled" :disabled="listeningBusy" @change="toggleListening" />
+        <span class="live-monitor__switch-track" aria-hidden="true"><span class="live-monitor__switch-thumb" /></span>
+      </label>
       <span :class="['live-monitor__status', { connected: snapshot.connected }]"><Radio :size="15" />{{ snapshot.connected ? "正在接收" : snapshot.listeningEnabled ? "连接中断" : "已暂停" }}</span>
     </header>
     <p v-if="snapshot.error || error" class="live-monitor__error" role="alert">{{ snapshot.error || error }}</p>
@@ -129,6 +141,13 @@ onBeforeUnmount(() => source?.close());
 .live-monitor__back { display: grid; place-items: center; width: 36px; height: 36px; color: inherit; border: 1px solid #68706e; }
 .live-monitor__status { margin-left: auto; display: flex; align-items: center; gap: 7px; color: #f0ae60; }
 .live-monitor__listening { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.live-monitor__switch-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.live-monitor__switch-track { width: 36px; height: 20px; display: flex; align-items: center; padding: 2px; border-radius: 20px; background: #6d7672; transition: background .2s; }
+.live-monitor__switch-thumb { width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.live-monitor__switch-input:checked + .live-monitor__switch-track { background: #a7c452; }
+.live-monitor__switch-input:checked + .live-monitor__switch-track .live-monitor__switch-thumb { transform: translateX(16px); }
+.live-monitor__switch-input:focus-visible + .live-monitor__switch-track { outline: 2px solid #d9ef72; outline-offset: 3px; }
+.live-monitor__switch-input:disabled + .live-monitor__switch-track { opacity: .6; }
 .live-monitor__listening + .live-monitor__status { margin-left: 8px; }
 .live-monitor__status.connected { color: #d9ef72; }
 .live-monitor__error { margin: 0; padding: 9px 24px; background: #ffebdb; color: #8c4026; }
@@ -161,5 +180,5 @@ onBeforeUnmount(() => source?.close());
 .live-monitor__login form { display: flex; gap: 8px; }
 .live-monitor__login input { min-width: 0; flex: 1; padding: 10px; border: 1px solid #bac3bd; }
 .live-monitor__login button { border: 0; background: #d9ef72; padding: 0 14px; cursor: pointer; }
-@media (max-width: 760px) { .live-monitor__columns { display: block; height: auto; } .live-monitor__columns section { max-height: 50dvh; } .live-monitor__users { border-left: 0; border-top: 1px solid #d0d5d1; } .live-monitor__header { padding-inline: 12px; } .live-monitor__header h1 { font-size: 18px; } }
+@media (max-width: 760px) { .live-monitor__columns { display: block; height: auto; } .live-monitor__columns section { max-height: 50dvh; } .live-monitor__users { border-left: 0; border-top: 1px solid #d0d5d1; } .live-monitor__header { height: auto; min-height: 86px; flex-wrap: wrap; padding-inline: 12px; } .live-monitor__header h1 { font-size: 18px; } .live-monitor__listening { margin-left: auto; } .live-monitor__listening + .live-monitor__status { margin-left: 0; } .live-monitor__columns { height: auto; } }
 </style>

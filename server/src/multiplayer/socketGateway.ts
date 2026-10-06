@@ -27,6 +27,7 @@ export function registerMultiplayerGateway(io: Server, manager: MultiplayerRoomM
       const input = createSchema.parse(payload);
       const view = manager.createRoom(input);
       bindSocket(socket, view.roomCode, input.sessionId);
+      if (input.answerSource === "BILIBILI") bilibiliBridge?.setListeningEnabled(true);
       return view;
     }));
 

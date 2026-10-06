@@ -46,10 +46,10 @@ describe("Bilibili live access lists", () => {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
-  it("persists listening state and blocks a live game while disabled", async () => {
+  it("starts with listening off, ignores the legacy config flag, and keeps manual changes in memory", async () => {
     const directory = mkdtempSync(join(tmpdir(), "arkfeets-listening-"));
     const path = join(directory, "config.json");
-    writeFileSync(path, JSON.stringify({ bilibili: { roomId: 123, listeningEnabled: false } }));
+    writeFileSync(path, JSON.stringify({ bilibili: { roomId: 123, listeningEnabled: true } }));
     const changed = vi.fn();
     const bridge = new BilibiliDanmakuBridge(path, () => undefined, changed);
     try {
@@ -58,11 +58,14 @@ describe("Bilibili live access lists", () => {
       await expect(bridge.start("LIVE")).rejects.toThrow("监听已关闭");
       release();
       bridge.setListeningEnabled(true);
+      expect(bridge.snapshot().listeningEnabled).toBe(true);
       expect(JSON.parse(readFileSync(path, "utf8")).bilibili.listeningEnabled).toBe(true);
       Object.assign(bridge, { activeRoomCode: "LIVE", connected: true, connection: { roomId: 123, close: vi.fn() } });
       bridge.setListeningEnabled(false);
       expect(bridge.snapshot()).toMatchObject({ listeningEnabled: false, connected: false });
       expect(changed).toHaveBeenCalledWith("LIVE", false);
+      const restarted = new BilibiliDanmakuBridge(path, () => undefined, () => undefined);
+      expect(restarted.snapshot().listeningEnabled).toBe(false);
     } finally {
       bridge.stop();
       rmSync(directory, { recursive: true, force: true });

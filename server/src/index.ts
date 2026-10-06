@@ -13,6 +13,7 @@ import { QuestionAdminService } from "./admin/questionAdminService.js";
 import { MultiplayerRoomManager } from "./multiplayer/multiplayerRoomManager.js";
 import { BilibiliDanmakuBridge } from "./multiplayer/bilibiliDanmakuBridge.js";
 import { GameAuditLogger } from "./multiplayer/gameAuditLogger.js";
+import { GameAuditReader } from "./multiplayer/gameAuditReader.js";
 import { relayLiveDanmaku } from "./multiplayer/liveDanmakuRelay.js";
 import { managerCallbacks, registerMultiplayerGateway } from "./multiplayer/socketGateway.js";
 import { QuestionRepository } from "./question/questionRepository.js";
@@ -37,6 +38,7 @@ const soloSessionManager = new SoloSessionManager(questionRepository);
 const adminSessions = new AdminSessionManager(config.adminPassword, (config.adminSessionHours ?? 8) * 60 * 60 * 1000);
 const questionAdminService = new QuestionAdminService(resourceDirectory, questionRepository);
 const gameAuditLogger = new GameAuditLogger(join(currentDir, "../logs/games"));
+const gameAuditReader = new GameAuditReader(join(currentDir, "../logs/games"));
 let bilibiliBridge: BilibiliDanmakuBridge;
 
 app.use("/full-data", express.static(join(resourceDirectory, "full_data")));
@@ -74,7 +76,7 @@ bilibiliBridge = new BilibiliDanmakuBridge(
   (roomCode, answer) => relayLiveDanmaku(multiplayerRoomManager, io, roomCode, answer),
   (roomCode, connected) => multiplayerRoomManager.setBilibiliConnection(roomCode, connected),
 );
-app.use("/api/admin", createAdminRoutes(adminSessions, questionAdminService, bilibiliBridge));
+app.use("/api/admin", createAdminRoutes(adminSessions, questionAdminService, bilibiliBridge, gameAuditReader));
 registerMultiplayerGateway(io, multiplayerRoomManager, bilibiliBridge);
 app.use("/api/game", createGameRoutes(multiplayerRoomManager));
 

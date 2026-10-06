@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { AdminSessionManager } from "../admin/adminSessionManager.js";
 import type { QuestionAdminService } from "../admin/questionAdminService.js";
 import type { BilibiliDanmakuBridge } from "../multiplayer/bilibiliDanmakuBridge.js";
+import type { GameAuditReader } from "../multiplayer/gameAuditReader.js";
 
 const loginSchema = z.object({ password: z.string().min(1).max(200) }).strict();
 const importDirectory = join(tmpdir(), "arkfeets-imports");
@@ -17,7 +18,7 @@ const zipUpload = multer({ dest: importDirectory, limits: { fileSize: 8 * 1024 *
 const batchUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 200 } });
 const exportProgress = new Map<string, { written: number; total: number; done: boolean; error?: string }>();
 
-export function createAdminRoutes(sessions: AdminSessionManager, questions: QuestionAdminService, live?: BilibiliDanmakuBridge): Router {
+export function createAdminRoutes(sessions: AdminSessionManager, questions: QuestionAdminService, live?: BilibiliDanmakuBridge, audit?: GameAuditReader): Router {
   const router = Router();
   router.post("/login", (request, response) => {
     try {
@@ -34,6 +35,22 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
     }
   });
   router.use(authenticate(sessions));
+  if (audit) {
+    const pagination = z.object({
+      page: z.coerce.number().int().min(0).max(100_000).default(0),
+      pageSize: z.coerce.number().int().min(1).max(100).default(20),
+    });
+    router.get("/games", (request, response) => runAsync(response, () => {
+      const { page, pageSize } = pagination.parse(request.query);
+      return audit.list(page, pageSize);
+    }));
+    router.get("/games/:id", (request, response) => runAsync(response, () => {
+      const { page, pageSize } = pagination.parse(request.query);
+      const search = z.string().max(100).default("").parse(request.query.search);
+      const correct = z.enum(["true", "false"]).optional().parse(request.query.correct);
+      return audit.detail(String(request.params.id), page, pageSize, search, correct === undefined ? undefined : correct === "true");
+    }));
+  }
   if (live) {
     router.get("/live/state", (_request, response) => run(response, () => live.snapshot()));
     router.get("/live/stream", async (_request, response) => {

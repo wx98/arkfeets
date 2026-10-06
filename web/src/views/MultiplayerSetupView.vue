@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Cable, LogIn, Radio, Settings2, Tv, Users } from "lucide-vue-next";
+import { ArrowLeft, Cable, History, LogIn, Radio, Settings2, Tv, Users } from "lucide-vue-next";
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { getClientSessionId, multiplayerSocket } from "../multiplayer/socket";
@@ -45,6 +45,7 @@ async function enter(mode: "create" | "join") {
       <button class="icon-button" title="返回首页" @click="router.push('/')"><ArrowLeft :size="20" /></button>
       <span class="brand-mark">粥批来猜∠ <small>MULTI</small></span>
       <span class="topbar__meta">ROOM TERMINAL / 多人房间</span>
+      <a href="/multi/records" class="icon-button" title="查看对局记录" aria-label="查看对局记录"><History :size="19" /></a>
     </header>
 
     <section class="multi-setup">

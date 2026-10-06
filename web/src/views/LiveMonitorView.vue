@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, CircleCheck, Radio, Search, ShieldCheck, ShieldX } from "lucide-vue-next";
+import { ArrowLeft, CircleCheck, History, Radio, Search, ShieldCheck, ShieldX } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 interface Message { uid: string; nickname: string; answer: string; messageId: string; timestamp: number; allowed: boolean }
@@ -84,6 +84,7 @@ onBeforeUnmount(() => source?.close());
     <header class="live-monitor__header">
       <a href="/multi" class="live-monitor__back" title="返回多人房间"><ArrowLeft :size="20" /></a>
       <div><small>BILIBILI LIVE / 弹幕监控</small><h1><a v-if="snapshot.roomId > 0" :href="`https://live.bilibili.com/${snapshot.roomId}`" target="_blank" rel="noopener noreferrer" title="打开 Bilibili 直播间">直播间 {{ snapshot.roomId }}</a><span v-else>直播间 未连接</span></h1></div>
+      <a href="/multi/records" class="live-monitor__records" title="查看对局记录"><History :size="16" />对局记录</a>
       <label v-if="!loginRequired" class="live-monitor__listening">
         <span>监听弹幕</span>
         <input class="live-monitor__switch-input" type="checkbox" role="switch" :checked="snapshot.listeningEnabled" :disabled="listeningBusy" @change="toggleListening" />
@@ -139,8 +140,9 @@ onBeforeUnmount(() => source?.close());
 .live-monitor__header h1 a:hover { color: #d9ef72; }
 .live-monitor__header small { color: #b8c1be; font-size: 10px; }
 .live-monitor__back { display: grid; place-items: center; width: 36px; height: 36px; color: inherit; border: 1px solid #68706e; }
+.live-monitor__records { margin-left: auto; display: flex; align-items: center; gap: 6px; color: #d9ef72; text-decoration: none; white-space: nowrap; font-size: 12px; }
 .live-monitor__status { margin-left: auto; display: flex; align-items: center; gap: 7px; color: #f0ae60; }
-.live-monitor__listening { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.live-monitor__listening { display: flex; align-items: center; gap: 7px; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .live-monitor__switch-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .live-monitor__switch-track { width: 36px; height: 20px; display: flex; align-items: center; padding: 2px; border-radius: 20px; background: #6d7672; transition: background .2s; }
 .live-monitor__switch-thumb { width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; }

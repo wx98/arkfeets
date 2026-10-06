@@ -35,6 +35,7 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
     }
   });
   router.use(authenticate(sessions));
+  router.get("/session", (_request, response) => response.json({ authenticated: true }));
   if (audit) {
     const pagination = z.object({
       page: z.coerce.number().int().min(0).max(100_000).default(0),

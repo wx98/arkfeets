@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Database, Play, Users } from "lucide-vue-next";
+import { Play, Settings2, Users } from "lucide-vue-next";
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -43,7 +43,7 @@ function enterAdmin() {
         <div class="mode-actions">
           <button class="button button--primary" @click="enterSolo"><Play :size="19" />单人挑战</button>
           <button class="button" @click="enterMulti"><Users :size="19" />多人房间</button>
-          <button class="button" @click="enterAdmin"><Database :size="19" />题库管理</button>
+          <button class="button" @click="enterAdmin"><Settings2 :size="19" />设置</button>
         </div>
         <p v-if="notice" class="home-notice">{{ notice }}</p>
       </div>

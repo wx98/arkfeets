@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Cable, History, LogIn, Radio, Settings2, Tv, Users } from "lucide-vue-next";
+import { ArrowLeft, Cable, LogIn, Radio, Tv, Users } from "lucide-vue-next";
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { getClientSessionId, multiplayerSocket } from "../multiplayer/socket";
@@ -13,7 +13,6 @@ const requestedCount = ref(20);
 const answerSource = ref<AnswerSource>("WEB");
 const busy = ref(false);
 const error = ref("");
-function openLiveMonitor() { window.open("/multi/live-monitor", "_blank", "noopener"); }
 
 async function enter(mode: "create" | "join") {
   error.value = "";
@@ -45,7 +44,6 @@ async function enter(mode: "create" | "join") {
       <button class="icon-button" title="返回首页" @click="router.push('/')"><ArrowLeft :size="20" /></button>
       <span class="brand-mark">粥批来猜∠ <small>MULTI</small></span>
       <span class="topbar__meta">ROOM TERMINAL / 多人房间</span>
-      <a href="/multi/records" class="icon-button" title="查看对局记录" aria-label="查看对局记录"><History :size="19" /></a>
     </header>
 
     <section class="multi-setup">
@@ -84,10 +82,7 @@ async function enter(mode: "create" | "join") {
             <div class="source-selector">
               <label :class="{ active: answerSource === 'WEB' }"><input v-model="answerSource" type="radio" value="WEB" /><Users :size="17" /><span>网页抢答<small>WEB CLIENT</small></span></label>
               <label :class="{ active: answerSource === 'EXTERNAL_API' }"><input v-model="answerSource" type="radio" value="EXTERNAL_API" /><Cable :size="17" /><span>外部接口<small>HTTP API</small></span></label>
-              <div class="source-selector__live">
-                <label :class="{ active: answerSource === 'BILIBILI' }"><input v-model="answerSource" type="radio" value="BILIBILI" /><Tv :size="17" /><span>直播弹幕<small>BILIBILI LIVE</small></span></label>
-                <button type="button" class="source-selector__settings" title="打开弹幕监控" aria-label="打开弹幕监控" @click="openLiveMonitor"><Settings2 :size="18" /></button>
-              </div>
+              <label :class="{ active: answerSource === 'BILIBILI' }"><input v-model="answerSource" type="radio" value="BILIBILI" /><Tv :size="17" /><span>直播弹幕<small>BILIBILI LIVE</small></span></label>
             </div>
           </fieldset>
           <button class="button button--primary" :disabled="busy" @click="enter('create')"><Users :size="19" />创建并等待队员</button>

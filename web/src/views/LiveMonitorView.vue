@@ -82,7 +82,7 @@ onBeforeUnmount(() => source?.close());
 <template>
   <main class="live-monitor">
     <header class="live-monitor__header">
-      <a href="/multi" class="live-monitor__back" title="返回多人房间"><ArrowLeft :size="20" /></a>
+      <a href="/admin" class="live-monitor__back" title="返回后台管理"><ArrowLeft :size="20" /></a>
       <div><small>BILIBILI LIVE / 弹幕监控</small><h1><a v-if="snapshot.roomId > 0" :href="`https://live.bilibili.com/${snapshot.roomId}`" target="_blank" rel="noopener noreferrer" title="打开 Bilibili 直播间">直播间 {{ snapshot.roomId }}</a><span v-else>直播间 未连接</span></h1></div>
       <a href="/multi/records" class="live-monitor__records" title="查看对局记录"><History :size="16" />对局记录</a>
       <label v-if="!loginRequired" class="live-monitor__listening">

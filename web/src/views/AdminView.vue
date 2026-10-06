@@ -65,8 +65,10 @@ const difficultyOptions: Array<{ value: Difficulty; label: string }> = [
 ];
 const router = useRouter();
 const token = ref(sessionStorage.getItem("arkfeets:admin-token") ?? "");
+const checkingSession = ref(true);
 const password = ref("");
 const library = ref<Library>();
+const isAuthenticated = computed(() => Boolean(token.value || library.value));
 const mode = ref<"images" | "questions" | "trash">("images");
 const searchText = ref("");
 const sidebarCollapsed = ref(false);
@@ -186,7 +188,7 @@ const duplicateTitleId = computed(() => {
 onMounted(() => {
   window.addEventListener("click", handleGlobalClick);
   window.addEventListener("keydown", handleDialogKeydown);
-  if (token.value) void loadLibrary().catch(handleError);
+  void restoreSession();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("click", handleGlobalClick);
@@ -203,6 +205,18 @@ function handleGlobalClick(event: MouseEvent) {
   if (imageSelectOpen.value && imageSelectRoot.value && !imageSelectRoot.value.contains(event.target as Node)) {
     imageSelectOpen.value = false;
   }
+}
+
+async function restoreSession() {
+  try {
+    await loadLibrary();
+  } catch {
+    if (token.value) {
+      token.value = "";
+      sessionStorage.removeItem("arkfeets:admin-token");
+      try { await loadLibrary(); } catch { /* The login form remains available. */ }
+    }
+  } finally { checkingSession.value = false; }
 }
 
 async function login() {
@@ -744,15 +758,16 @@ function questionPreviewStyle(question: LibraryQuestion) {
 <template>
   <main class="page-shell admin-page">
     <header class="topbar">
-      <button class="icon-button" title="返回首页" @click="router.push('/')"><ArrowLeft :size="18" /></button>
+      <button class="icon-button" title="返回后台管理" @click="router.push('/admin')"><ArrowLeft :size="18" /></button>
       <div class="brand-mark">题库管理 <small>ARCHIVE CONTROL</small></div>
-      <button v-if="token" class="icon-button admin-sidebar-toggle" :title="sidebarCollapsed ? '展开左侧目录' : '隐藏左侧目录'" @click="sidebarCollapsed = !sidebarCollapsed">
+      <button v-if="isAuthenticated" class="icon-button admin-sidebar-toggle" :title="sidebarCollapsed ? '展开左侧目录' : '隐藏左侧目录'" @click="sidebarCollapsed = !sidebarCollapsed">
         <PanelLeftOpen v-if="sidebarCollapsed" :size="18" /><PanelLeftClose v-else :size="18" />
       </button>
-      <button v-if="token" class="icon-button admin-logout" title="退出后台" @click="logout"><LogOut :size="18" /></button>
+      <button v-if="isAuthenticated" class="icon-button admin-logout" title="退出后台" @click="logout"><LogOut :size="18" /></button>
     </header>
 
-    <section v-if="!token" class="admin-login">
+    <section v-if="checkingSession && !isAuthenticated" class="center-state">正在验证管理会话...</section>
+    <section v-else-if="!isAuthenticated" class="admin-login">
       <div class="admin-login__mark"><Database :size="46" /></div>
       <p class="eyebrow">AUTHORIZED PERSONNEL ONLY</p>
       <h1>档案终端</h1>

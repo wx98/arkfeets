@@ -155,7 +155,7 @@ onBeforeUnmount(() => { if (searchTimer) clearTimeout(searchTimer); detailReques
 <template>
   <main class="records-page">
     <header class="records-header">
-      <a href="/multi" class="records-back" title="返回多人房间" aria-label="返回多人房间"><ArrowLeft :size="20" /></a>
+      <a href="/admin" class="records-back" title="返回后台管理" aria-label="返回后台管理"><ArrowLeft :size="20" /></a>
       <div><small>MISSION ARCHIVE / 对局档案</small><h1>对局记录</h1></div>
       <a href="/multi/live-monitor" class="records-monitor"><Radio :size="16" />弹幕监控</a>
       <button class="records-refresh" title="刷新记录" aria-label="刷新记录" :disabled="loadingList" @click="loadGames"><RefreshCw :size="18" /></button>

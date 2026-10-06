@@ -1,6 +1,7 @@
 import { matchesAnswer } from "../question/answerMatcher.js";
 import type { Difficulty, Question } from "../question/types.js";
 import type { QuestionRepository } from "../question/questionRepository.js";
+import type { AnswerAudit, GameEndAudit, GameStartAudit } from "./gameAuditLogger.js";
 
 export type MultiplayerRoomState = "LOBBY" | "ANSWERING" | "REVEAL" | "RANKING";
 export type AnswerSource = "WEB" | "EXTERNAL_API" | "BILIBILI";
@@ -78,6 +79,9 @@ interface ManagerOptions {
   rankingDurationMs?: number;
   onRoomUpdated?: (roomCode: string) => void;
   onRoomClosed?: (roomCode: string, message: string) => void;
+  onGameStarted?: (roomCode: string, details: GameStartAudit) => void;
+  onAnswerReceived?: (roomCode: string, details: AnswerAudit) => void;
+  onGameEnded?: (roomCode: string, details: GameEndAudit) => void;
 }
 
 const defaultDurations: Record<Difficulty, number> = {
@@ -95,12 +99,18 @@ export class MultiplayerRoomManager {
   private readonly rankingDurationMs: number;
   private readonly onRoomUpdated: (roomCode: string) => void;
   private readonly onRoomClosed: (roomCode: string, message: string) => void;
+  private readonly onGameStarted: NonNullable<ManagerOptions["onGameStarted"]>;
+  private readonly onAnswerReceived: NonNullable<ManagerOptions["onAnswerReceived"]>;
+  private readonly onGameEnded: NonNullable<ManagerOptions["onGameEnded"]>;
 
   constructor(private readonly questionRepository: Pick<QuestionRepository, "drawQuestions">, options: ManagerOptions = {}) {
     this.durations = { ...defaultDurations, ...options.durationSeconds };
     this.rankingDurationMs = options.rankingDurationMs ?? 30_000;
     this.onRoomUpdated = options.onRoomUpdated ?? (() => undefined);
     this.onRoomClosed = options.onRoomClosed ?? (() => undefined);
+    this.onGameStarted = options.onGameStarted ?? (() => undefined);
+    this.onAnswerReceived = options.onAnswerReceived ?? (() => undefined);
+    this.onGameEnded = options.onGameEnded ?? (() => undefined);
   }
 
   createRoom(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number; answerSource?: AnswerSource }) {
@@ -156,6 +166,10 @@ export class MultiplayerRoomManager {
     }
     const questions = this.questionRepository.drawQuestions(room.difficulty, 1_000_000);
     if (questions.length === 0) throw new Error("当前难度没有可用题目");
+    this.onGameStarted(room.code, {
+      answerSource: room.answerSource, difficulty: room.difficulty,
+      requestedCount: room.requestedCount, questionCount: Math.min(room.requestedCount, questions.length),
+    });
     room.questions = questions;
     room.regularQuestionCount = Math.min(room.requestedCount, questions.length);
     room.currentIndex = 0;
@@ -180,11 +194,13 @@ export class MultiplayerRoomManager {
       throw new Error("本题已经超时");
     }
     if (!matchesAnswer(answer, this.currentQuestion(room).answers)) {
+      this.auditAnswer(room, player, answer, false);
       return { view: this.toView(room, sessionId, "还不对，再想想"), correct: false };
     }
 
     this.clearTimer(room);
     player.score += 1;
+    this.auditAnswer(room, player, answer, true);
     room.state = "REVEAL";
     room.roundWinnerSessionId = sessionId;
     this.changed(room);
@@ -262,9 +278,13 @@ export class MultiplayerRoomManager {
       this.changed(room);
     }
     const normalized = (value: string) => value.trim().toLocaleLowerCase();
-    if (!normalized(answer) || !this.currentQuestion(room).answers.some((valid) => normalized(valid) === normalized(answer))) return false;
+    if (!normalized(answer) || !this.currentQuestion(room).answers.some((valid) => normalized(valid) === normalized(answer))) {
+      this.auditAnswer(room, player, answer, false);
+      return false;
+    }
     this.clearTimer(room);
     player.score += 1;
+    this.auditAnswer(room, player, answer, true);
     room.state = "REVEAL";
     room.roundWinnerSessionId = sessionId;
     this.changed(room);
@@ -318,7 +338,10 @@ export class MultiplayerRoomManager {
   }
 
   dispose(): void {
-    for (const room of this.rooms.values()) this.clearTimer(room);
+    for (const room of this.rooms.values()) {
+      this.clearTimer(room);
+      if (room.questions.length) this.auditEnd(room, "server_stopped");
+    }
     this.rooms.clear();
     this.activeExternalRoomCode = undefined;
     this.activeBilibiliRoomCode = undefined;
@@ -376,6 +399,7 @@ export class MultiplayerRoomManager {
   private finish(room: Room, winnerSessionIds: string[]): void {
     this.clearTimer(room);
     room.state = "RANKING";
+    this.auditEnd(room, "completed");
     this.releaseExternalRoom(room);
     this.releaseBilibiliRoom(room);
     room.winnerSessionIds = winnerSessionIds;
@@ -467,6 +491,37 @@ export class MultiplayerRoomManager {
     return question;
   }
 
+  private auditAnswer(room: Room, player: Player, answer: string, correct: boolean): void {
+    const question = this.currentQuestion(room);
+    const ranked = this.rankedPlayers(room);
+    this.onAnswerReceived(room.code, {
+      answerSource: room.answerSource,
+      questionId: question.id,
+      questionIndex: room.currentIndex + 1,
+      overtime: room.overtime,
+      standardAnswers: [...question.answers],
+      userId: player.sessionId,
+      nickname: player.nickname,
+      answer,
+      correct,
+      score: player.score,
+      rank: ranked.findIndex(item => item.sessionId === player.sessionId) + 1,
+    });
+  }
+
+  private auditEnd(room: Room, reason: GameEndAudit["reason"]): void {
+    this.onGameEnded(room.code, {
+      reason,
+      players: this.rankedPlayers(room).map((player, index) => ({
+        userId: player.sessionId, nickname: player.nickname, score: player.score, rank: index + 1,
+      })),
+    });
+  }
+
+  private rankedPlayers(room: Room): Player[] {
+    return [...room.players.values()].sort((left, right) => right.score - left.score || left.joinedAt - right.joinedAt);
+  }
+
   private getRoom(roomCode: string): Room {
     const room = this.rooms.get(normalizeRoomCode(roomCode));
     if (!room) throw new Error("房间不存在或已解散");
@@ -494,6 +549,7 @@ export class MultiplayerRoomManager {
 
   private destroyRoom(room: Room, message: string): void {
     this.clearTimer(room);
+    if (room.questions.length && room.state !== "RANKING") this.auditEnd(room, "room_closed");
     this.releaseExternalRoom(room);
     this.releaseBilibiliRoom(room);
     this.rooms.delete(room.code);

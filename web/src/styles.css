@@ -162,6 +162,10 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
 .create-config > .button { width: 100%; margin-top: auto; }
 .source-selector { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; }
 .source-selector label { min-width: 0; }
+.source-selector__live { position: relative; min-width: 0; }
+.source-selector__live label { height: 100%; padding-right: 42px; }
+.source-selector__settings { position: absolute; z-index: 1; right: 7px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid #777; background: #25282a; color: #d9dcda; cursor: pointer; }
+.source-selector__settings:hover { color: var(--signal); border-color: var(--signal); }
 .source-selector label span { min-width: 0; }
 .source-selector label { position: relative; min-height: 58px; display: flex; align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid #555a5b; color: #aeb3b3; cursor: pointer; }
 .source-selector input { position: absolute; opacity: 0; pointer-events: none; }

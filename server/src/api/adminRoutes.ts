@@ -7,6 +7,7 @@ import multer from "multer";
 import { z } from "zod";
 import type { AdminSessionManager } from "../admin/adminSessionManager.js";
 import type { QuestionAdminService } from "../admin/questionAdminService.js";
+import type { BilibiliDanmakuBridge } from "../multiplayer/bilibiliDanmakuBridge.js";
 
 const loginSchema = z.object({ password: z.string().min(1).max(200) }).strict();
 const importDirectory = join(tmpdir(), "arkfeets-imports");
@@ -16,7 +17,7 @@ const zipUpload = multer({ dest: importDirectory, limits: { fileSize: 8 * 1024 *
 const batchUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 200 } });
 const exportProgress = new Map<string, { written: number; total: number; done: boolean; error?: string }>();
 
-export function createAdminRoutes(sessions: AdminSessionManager, questions: QuestionAdminService): Router {
+export function createAdminRoutes(sessions: AdminSessionManager, questions: QuestionAdminService, live?: BilibiliDanmakuBridge): Router {
   const router = Router();
   router.post("/login", (request, response) => {
     try {
@@ -33,6 +34,31 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
     }
   });
   router.use(authenticate(sessions));
+  if (live) {
+    router.get("/live/state", (_request, response) => run(response, () => live.snapshot()));
+    router.get("/live/stream", async (_request, response) => {
+      response.setHeader("Content-Type", "text/event-stream");
+      response.setHeader("Cache-Control", "no-cache, no-transform");
+      response.setHeader("Connection", "keep-alive");
+      response.flushHeaders();
+      const release = await live.acquireMonitor(snapshot => {
+        if (!response.destroyed) response.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+      });
+      if (response.destroyed) { release(); return; }
+      const keepalive = setInterval(() => {
+        if (!response.destroyed) response.write(": keepalive\n\n");
+      }, 20_000);
+      response.on("close", () => { clearInterval(keepalive); release(); });
+    });
+    router.put("/live/users/:uid", (request, response) => run(response, () => {
+      const status = z.enum(["normal", "white", "black"]).parse(request.body?.status);
+      return live.setAccess(String(request.params.uid), status);
+    }));
+    router.put("/live/allowlist", (request, response) => run(response, () => {
+      const enabled = z.boolean().parse(request.body?.enabled);
+      return live.setAllowlistMode(enabled);
+    }));
+  }
   router.post("/logout", (request, response) => {
     sessions.logout(readAdminToken(request.headers.authorization, request.headers.cookie));
     response.clearCookie("arkfeets_admin", { path: "/api/admin" });

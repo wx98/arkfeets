@@ -38,7 +38,6 @@ let bilibiliBridge: BilibiliDanmakuBridge;
 
 app.use("/full-data", express.static(join(resourceDirectory, "full_data")));
 app.use("/api/solo", createSoloRoutes(soloSessionManager));
-app.use("/api/admin", createAdminRoutes(adminSessions, questionAdminService));
 
 app.get("/api/health", (_request, response) => {
   response.json({ ok: true, time: Date.now(), questions: questionRepository.getValidationReport().validCount });
@@ -73,6 +72,7 @@ bilibiliBridge = new BilibiliDanmakuBridge(
   },
   (roomCode, connected) => multiplayerRoomManager.setBilibiliConnection(roomCode, connected),
 );
+app.use("/api/admin", createAdminRoutes(adminSessions, questionAdminService, bilibiliBridge));
 registerMultiplayerGateway(io, multiplayerRoomManager, bilibiliBridge);
 app.use("/api/game", createGameRoutes(multiplayerRoomManager));
 

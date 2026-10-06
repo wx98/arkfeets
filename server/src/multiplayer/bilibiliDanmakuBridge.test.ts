@@ -1,118 +1,48 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { BilibiliDanmakuBridge, parseBilibiliTextPacket } from "./bilibiliDanmakuBridge.js";
+import { brotliCompressSync } from "node:zlib";
+import { describe, expect, it } from "vitest";
+import { BilibiliDanmakuBridge } from "./bilibiliDanmakuBridge.js";
+import { decodeBilibiliPackets, makeBilibiliPacket, parseBilibiliTextCommand } from "./bilibiliProtocol.js";
 
-function textPacket(uid = "42", answer = " 答案 "): { cmd: number; data: unknown[] } {
-  const data: unknown[] = [];
-  data[2] = "玩家";
-  data[4] = answer;
-  data[6] = 0;
-  data[11] = "message-1";
-  data[13] = 0;
-  data[16] = uid;
-  data[18] = 0;
-  return { cmd: 2, data };
-}
+describe("Bilibili direct protocol", () => {
+  it("decodes compressed and plain websocket packets", () => {
+    const command = makeBilibiliPacket(5, JSON.stringify({ cmd: "DANMU_MSG" }));
+    expect(decodeBilibiliPackets(command)[0]?.operation).toBe(5);
+    const compressed = brotliCompressSync(command);
+    const frame = Buffer.alloc(16 + compressed.length);
+    frame.writeUInt32BE(frame.length, 0);
+    frame.writeUInt16BE(16, 4);
+    frame.writeUInt16BE(3, 6);
+    frame.writeUInt32BE(5, 8);
+    compressed.copy(frame, 16);
+    expect(decodeBilibiliPackets(frame)[0]?.body.toString()).toBe(command.subarray(16).toString());
+  });
 
-class FakeWebSocket extends EventTarget {
-  static instances: FakeWebSocket[] = [];
-  sent: string[] = [];
-  constructor(readonly url: string) {
-    super();
-    FakeWebSocket.instances.push(this);
-  }
-  send(value: string) { this.sent.push(value); }
-  close() { this.dispatchEvent(new Event("close")); }
-  receive(value: unknown) { this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(value) })); }
-}
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-  FakeWebSocket.instances = [];
+  it("accepts text and rejects emoticons, gifts and mirrors", () => {
+    const ordinary = { cmd: "DANMU_MSG", info: [[0, 0, 0, 0, 1, "mid"], " 答案 ", ["42", "玩家"]] };
+    expect(parseBilibiliTextCommand(ordinary)).toMatchObject({ uid: "42", nickname: "玩家", answer: "答案" });
+    expect(parseBilibiliTextCommand({ ...ordinary, cmd: "DANMU_MSG_MIRROR" })).toBeNull();
+    expect(parseBilibiliTextCommand({ cmd: "SEND_GIFT", data: {} })).toBeNull();
+    expect(parseBilibiliTextCommand({ cmd: "LIVE_OPEN_PLATFORM_DM", data: { open_id: "id", uname: "玩家", msg: "abc", msg_id: "m", dm_type: 1 } })).toBeNull();
+    expect(parseBilibiliTextCommand({ cmd: "LIVE_OPEN_PLATFORM_DM", data: { open_id: "id", uname: "玩家", msg: " abc ", msg_id: "m", dm_type: 0 } })).toMatchObject({ uid: "id", answer: "abc" });
+  });
 });
 
-describe("Bilibili danmaku bridge", () => {
-  it("accepts only ordinary text with a real UID", () => {
-    expect(parseBilibiliTextPacket(textPacket(), new Set())).toMatchObject({ uid: "42", answer: "答案" });
-    expect(parseBilibiliTextPacket(textPacket(), new Set(["42"]))).toBeNull();
-    expect(parseBilibiliTextPacket(textPacket("0"), new Set())).toBeNull();
-    expect(parseBilibiliTextPacket({ ...textPacket(), cmd: 5 }, new Set())).toBeNull();
-    const emoticon = textPacket(); emoticon.data[13] = 1;
-    expect(parseBilibiliTextPacket(emoticon, new Set())).toBeNull();
-    const gift = textPacket(); gift.data[6] = 1;
-    expect(parseBilibiliTextPacket(gift, new Set())).toBeNull();
-    const mirror = textPacket(); mirror.data[18] = 1;
-    expect(parseBilibiliTextPacket(mirror, new Set())).toBeNull();
-  });
-
-  it("joins by room ID and applies edited blacklist without reconnecting", async () => {
-    vi.stubGlobal("WebSocket", FakeWebSocket);
+describe("Bilibili live access lists", () => {
+  it("atomically updates lists without replacing room settings", () => {
     const directory = mkdtempSync(join(tmpdir(), "arkfeets-live-"));
-    const configPath = join(directory, "config.json");
-    const config = { bilibili: { blivechatWsUrl: "ws://127.0.0.1:12450/api/chat", roomId: 123, authCode: "", uidBlacklist: [] as string[] } };
-    writeFileSync(configPath, JSON.stringify(config));
-    const answers: string[] = [];
-    const bridge = new BilibiliDanmakuBridge(configPath, (_, answer) => answers.push(answer.answer), () => undefined);
+    const path = join(directory, "config.json");
+    writeFileSync(path, JSON.stringify({ bilibili: { roomId: 123, authCode: "private-code", uidBlacklist: ["1"] } }));
     try {
-      const connecting = bridge.start("LIVE");
-      const socket = FakeWebSocket.instances[0];
-      socket.dispatchEvent(new Event("open"));
-      await connecting;
-      expect(JSON.parse(socket.sent[0])).toMatchObject({ cmd: 1, data: { roomKey: { type: 1, value: 123 } } });
-      socket.receive(textPacket());
-      expect(answers).toEqual(["答案"]);
-      config.bilibili.uidBlacklist = ["42"];
-      writeFileSync(configPath, JSON.stringify(config));
-      expect(JSON.parse(readFileSync(configPath, "utf8")).bilibili.uidBlacklist).toEqual(["42"]);
-      const blocked = textPacket(); blocked.data[11] = "message-2";
-      socket.receive(blocked);
-      expect(answers).toEqual(["答案"]);
-    } finally {
-      bridge.stop();
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("uses the configured identity code when present", async () => {
-    vi.stubGlobal("WebSocket", FakeWebSocket);
-    const directory = mkdtempSync(join(tmpdir(), "arkfeets-live-"));
-    const configPath = join(directory, "config.json");
-    writeFileSync(configPath, JSON.stringify({ bilibili: {
-      blivechatWsUrl: "ws://127.0.0.1:12450/api/chat", roomId: 123, authCode: "secret-code", uidBlacklist: [],
-    } }));
-    const bridge = new BilibiliDanmakuBridge(configPath, () => undefined, () => undefined);
-    try {
-      const connecting = bridge.start("LIVE");
-      const socket = FakeWebSocket.instances[0];
-      socket.dispatchEvent(new Event("open"));
-      await connecting;
-      expect(JSON.parse(socket.sent[0])).toMatchObject({ data: { roomKey: { type: 2, value: "secret-code" } } });
-    } finally {
-      bridge.stop();
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects startup when blivechat reports a fatal join error", async () => {
-    vi.stubGlobal("WebSocket", FakeWebSocket);
-    const directory = mkdtempSync(join(tmpdir(), "arkfeets-live-"));
-    const configPath = join(directory, "config.json");
-    writeFileSync(configPath, JSON.stringify({ bilibili: {
-      blivechatWsUrl: "ws://127.0.0.1:12450/api/chat", roomId: 123, authCode: "", uidBlacklist: [],
-    } }));
-    const bridge = new BilibiliDanmakuBridge(configPath, () => undefined, () => undefined);
-    try {
-      const connecting = bridge.start("LIVE");
-      const socket = FakeWebSocket.instances[0];
-      socket.dispatchEvent(new Event("open"));
-      socket.receive({ cmd: 8 });
-      await expect(connecting).rejects.toThrow("直播连接被拒绝");
-      expect(bridge.roomCode).toBeUndefined();
-    } finally {
-      bridge.stop();
-      rmSync(directory, { recursive: true, force: true });
-    }
+      const bridge = new BilibiliDanmakuBridge(path, () => undefined, () => undefined);
+      bridge.setAccess("2", "white");
+      bridge.setAccess("1", "normal");
+      bridge.setAllowlistMode(true);
+      const value = JSON.parse(readFileSync(path, "utf8")).bilibili;
+      expect(value).toMatchObject({ roomId: 123, authCode: "private-code", uidBlacklist: [], uidWhitelist: ["2"], allowlistMode: true });
+      expect(bridge.snapshot()).toMatchObject({ whitelist: ["2"], allowlistMode: true });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

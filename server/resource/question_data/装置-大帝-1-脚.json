@@ -1,0 +1,28 @@
+{
+  "id": "装置-大帝-1-脚",
+  "title": "装置 大帝 1",
+  "answers": [
+    "装置"
+  ],
+  "hint": "",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:2星",
+    "获取途径:加工站"
+  ],
+  "originalImage": "装置 大帝 1.png",
+  "question": {
+    "x": 239,
+    "y": 819,
+    "width": 494,
+    "height": 205,
+    "sourceWidth": 1024,
+    "sourceHeight": 1024
+  },
+  "enabled": true
+}

@@ -1,0 +1,33 @@
+{
+  "id": "领主-Sharp-1-脚",
+  "title": "领主·Sharp 1",
+  "answers": [
+    "领主·Sharp",
+    "领主·Sharp精一"
+  ],
+  "hint": "",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:6星",
+    "职业:近卫",
+    "分支:领主",
+    "位置:近战位",
+    "获取途径:无",
+    "上线时间:2025-11-14 16:00"
+  ],
+  "originalImage": "领主·Sharp 1.png",
+  "question": {
+    "x": 314,
+    "y": 789,
+    "width": 344,
+    "height": 235,
+    "sourceWidth": 1024,
+    "sourceHeight": 1024
+  },
+  "enabled": true
+}

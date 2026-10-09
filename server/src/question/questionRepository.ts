@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname, join, normalize, sep } from "node:path";
 import { z } from "zod";
+import { initialTopics, topicIdSchema, topicsSchema } from "./topics.js";
 import { difficulties, type CropRect, type Difficulty, type Question, type QuestionValidationItem } from "./types.js";
 
 const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
@@ -30,6 +31,7 @@ export const questionRecordSchema = z.object({
 export const catalogueEntrySchema = z.object({
   id: z.string().regex(safeIdPattern),
   file: z.string().trim().min(1),
+  topic: z.array(topicIdSchema).default([]),
 }).strict();
 
 export const catalogueSchema = z.array(catalogueEntrySchema);
@@ -69,7 +71,13 @@ export class QuestionRepository {
 
   private load(): void {
     const catalogue = catalogueSchema.parse(JSON.parse(readFileSync(join(this.resourceDirectory, "catalogue.json"), "utf8")));
+    const topicsPath = join(this.resourceDirectory, "topic.json");
+    const topics = existsSync(topicsPath) ? topicsSchema.parse(JSON.parse(readFileSync(topicsPath, "utf8"))) : initialTopics;
+    const topicIds = new Set(topics.map((topic) => topic.id));
+    const defaultTopic = topics.some((topic) => topic.id === initialTopics[0].id)
+      ? initialTopics[0].id : topics.find((topic) => topic.isDefault)!.id;
     const seen = new Set<string>();
+    const seenImages = new Map<string, string>();
     for (const entry of catalogue) {
       const errors: string[] = [];
       try {
@@ -77,6 +85,14 @@ export class QuestionRepository {
         seen.add(entry.id);
         const record = questionRecordSchema.parse(JSON.parse(readFileSync(this.resolveQuestionRecord(entry), "utf8")));
         if (record.id !== entry.id) errors.push("索引 ID、文件名和题目 ID 不一致");
+        const assignedTopics = entry.topic.length ? entry.topic : [defaultTopic];
+        for (const topicId of assignedTopics) {
+          if (!topicIds.has(topicId)) errors.push(`主题不存在：${topicId}`);
+          const key = `${topicId}\0${record.originalImage}`;
+          if (seenImages.has(key)) errors.push(`主题 ${topicId} 中原图 ${record.originalImage} 已被题目 ${seenImages.get(key)} 使用`);
+          else seenImages.set(key, record.id);
+        }
+        if (new Set(assignedTopics).size !== assignedTopics.length) errors.push("题目主题不能重复");
         errors.push(...validateCompleteRecord(record, join(this.resourceDirectory, "full_data")));
         if (errors.length === 0) {
           this.questions.push({

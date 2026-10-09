@@ -88,6 +88,9 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
     response.json({ ok: true });
   });
   router.get("/library", (_request, response) => run(response, () => questions.list()));
+  router.post("/topics", (request, response) => run(response, () => questions.createTopic(z.string().parse(request.body?.name))));
+  router.put("/topics/:id", (request, response) => run(response, () => questions.updateTopic(String(request.params.id), z.object({ name: z.string(), isDefault: z.boolean() }).strict().parse(request.body))));
+  router.delete("/topics/:id", (request, response) => run(response, () => questions.deleteTopic(String(request.params.id))));
   router.get("/questions", (_request, response) => run(response, () => questions.list()));
   router.post("/questions", (request, response) => run(response, () => ({ id: questions.createQuestion(request.body) })));
   router.get("/questions/export-progress/:jobId", (request, response) => {

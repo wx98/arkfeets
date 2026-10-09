@@ -1,0 +1,25 @@
+{
+  "id": "Mechanist-脚",
+  "title": "Mechanist",
+  "answers": [
+    "Mechanist"
+  ],
+  "hint": "",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [],
+  "originalImage": "Mechanist.png",
+  "question": {
+    "x": 302,
+    "y": 513,
+    "width": 249,
+    "height": 249,
+    "sourceWidth": 1244,
+    "sourceHeight": 1244
+  },
+  "enabled": false
+}

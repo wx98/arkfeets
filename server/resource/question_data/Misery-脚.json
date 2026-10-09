@@ -1,0 +1,25 @@
+{
+  "id": "Misery-脚",
+  "title": "Misery",
+  "answers": [
+    "Misery"
+  ],
+  "hint": "",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [],
+  "originalImage": "Misery.png",
+  "question": {
+    "x": 487,
+    "y": 1000,
+    "width": 498,
+    "height": 472,
+    "sourceWidth": 1472,
+    "sourceHeight": 1472
+  },
+  "enabled": true
+}

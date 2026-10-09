@@ -14,6 +14,7 @@ beforeEach(() => {
   mkdirSync(join(rootDirectory, "full_data"));
   mkdirSync(join(rootDirectory, "question_data"));
   writeFileSync(join(rootDirectory, "full_data", "existing.png"), "image");
+  writeFileSync(join(rootDirectory, "full_data", "new.png"), "image");
   writeFileSync(join(rootDirectory, "full_data", "existing.json"), JSON.stringify({ name: "existing" }));
   writeFileSync(join(rootDirectory, "catalogue.json"), JSON.stringify([{ id: "existing", file: "question_data/existing.json" }]));
   writeFileSync(join(rootDirectory, "question_data", "existing.json"), JSON.stringify(record("existing", ["旧答案"])));
@@ -46,16 +47,16 @@ describe("QuestionAdminService", () => {
   it("creates a question only after title and crop are complete", () => {
     const service = createService();
     expect(() => service.createQuestion({ ...validInput(["答案"]), title: "", question: null })).toThrow("填写标题");
-    const id = service.createQuestion({ ...validInput(["答案"]), title: "新问题", enabled: false });
+    const id = service.createQuestion({ ...validInput(["答案"], "new.png"), title: "新问题", enabled: false });
     expect(id).toBe("新问题");
-    expect(JSON.parse(readFileSync(join(rootDirectory, "catalogue.json"), "utf8"))).toContainEqual({ id, file: `question_data/${id}.json` });
+    expect(JSON.parse(readFileSync(join(rootDirectory, "catalogue.json"), "utf8"))).toContainEqual({ id, file: `question_data/${id}.json`, topic: ["脚"] });
   });
 
   it("rejects creating a question whose title or derived id already exists", () => {
     const service = createService();
     expect(() => service.createQuestion({ ...validInput(["答案"]), title: "existing", enabled: false })).toThrow("已存在相同标题的题目");
     expect(() => service.createQuestion({ ...validInput(["答案"]), title: "题目", enabled: false })).toThrow("ID：existing");
-    service.createQuestion({ ...validInput(["答案"]), title: "新问题", enabled: false });
+    service.createQuestion({ ...validInput(["答案"], "new.png"), title: "新问题", enabled: false });
     // 末尾标点被归一化去除后派生出相同 ID，同样拒绝创建
     expect(() => service.createQuestion({ ...validInput(["答案"]), title: "新问题！", enabled: false })).toThrow("已存在相同标题的题目");
     const deleted = service.deleteQuestion("existing");
@@ -89,6 +90,38 @@ describe("QuestionAdminService", () => {
     const library = createService().list();
     expect(library.images).toContainEqual(expect.objectContaining({ fileName: "existing.png", validCount: 1, totalCount: 1 }));
     expect(library.questions[0]).toMatchObject({ id: "existing", validation: { valid: true } });
+  });
+
+  it("keeps one default topic and prevents deleting a referenced topic", () => {
+    const service = createService();
+    const topic = service.createTopic("立绘");
+    expect(topic.isDefault).toBe(false);
+    expect(() => service.deleteTopic("脚")).toThrow("默认主题");
+    service.updateTopic(topic.id, { name: "立绘图", isDefault: true });
+    expect(() => service.deleteTopic("脚")).toThrow("关联题目");
+    expect(service.list().topics.find((item) => item.id === topic.id)).toMatchObject({ name: "立绘图", isDefault: true });
+    expect(() => service.createTopic("立绘图")).toThrow("主题名称已存在");
+  });
+
+  it("allows the same image in different topics but not twice in one topic", () => {
+    const service = createService();
+    const topic = service.createTopic("造型");
+    expect(() => service.createQuestion({ ...validInput(["答案"]), title: "冲突", enabled: false })).toThrow("已有题目");
+    service.createQuestion({ ...validInput(["答案"]), title: "另一题", topic: [topic.id], enabled: false });
+    expect(() => service.updateQuestion("另一题", { ...validInput(["答案"]), title: "另一题", topic: ["脚", topic.id] })).toThrow("已有题目");
+    expect(service.list().images.find((image) => image.fileName === "existing.png")?.topicIds).toEqual(["脚", topic.id]);
+  });
+
+  it("restores the original topic and refuses a conflicting restore", () => {
+    const service = createService();
+    const topic = service.createTopic("造型");
+    service.createQuestion({ ...validInput(["答案"], "new.png"), title: "第二题", topic: [topic.id], enabled: false });
+    const deleted = service.deleteQuestion("第二题");
+    service.createQuestion({ ...validInput(["答案"], "new.png"), title: "第三题", topic: [topic.id], enabled: false });
+    expect(() => service.restoreQuestion(deleted.trashId)).toThrow("已有题目");
+    service.deleteQuestion("第三题");
+    service.restoreQuestion(deleted.trashId);
+    expect(service.list().questions.find((question) => question.id === "第二题")?.topic).toEqual([topic.id]);
   });
 
   it("reads and writes structured image metadata tags", () => {
@@ -135,6 +168,7 @@ describe("QuestionAdminService", () => {
     const archiveBuffer = Buffer.concat(chunks);
     const archive = new AdmZip(archiveBuffer);
     expect(archive.getEntry("catalogue.json")).not.toBeNull();
+    expect(archive.getEntry("topic.json")).not.toBeNull();
     expect(archive.getEntry("question_data/existing.json")).not.toBeNull();
     expect(archive.getEntry("full_data/existing.png")).not.toBeNull();
     const destination = mkdtempSync(join(tmpdir(), "arkfeets-import-"));
@@ -146,6 +180,7 @@ describe("QuestionAdminService", () => {
       writeFileSync(archivePath, archiveBuffer);
       const imported = await new QuestionAdminService(destination, new QuestionRepository(destination)).importZip(archivePath);
       expect(imported.importedIds).toEqual(["existing"]);
+      expect(JSON.parse(readFileSync(join(destination, "topic.json"), "utf8"))).toContainEqual({ id: "脚", name: "脚", isDefault: true });
     } finally {
       rmSync(destination, { recursive: true, force: true });
     }
@@ -156,14 +191,14 @@ function createService() {
   return new QuestionAdminService(rootDirectory, new QuestionRepository(rootDirectory));
 }
 
-function validInput(answers: string[]) {
+function validInput(answers: string[], originalImage = "existing.png") {
   return {
     title: "题目",
     answers,
     hint: "",
     difficulty: ["simple", "medium", "hard", "hell"] as const,
     tags: [],
-    originalImage: "existing.png",
+    originalImage,
     question: { x: 10, y: 20, width: 100, height: 80, sourceWidth: 200, sourceHeight: 160 },
     enabled: true,
   };

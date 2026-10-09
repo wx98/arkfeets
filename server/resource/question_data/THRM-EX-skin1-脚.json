@@ -1,0 +1,34 @@
+{
+  "id": "THRM-EX-skin1-脚",
+  "title": "THRM-EX skin1",
+  "answers": [
+    "THRM-EX",
+    "THRM-EX皮肤"
+  ],
+  "hint": "梅尔参与改装的热情过头的熔岩猫作业平台",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:1星",
+    "职业:特种",
+    "分支:处决者",
+    "位置:近战位",
+    "性别:男",
+    "获取途径:公开招募 主线剧情 活动获得",
+    "上线时间:2020-05-01 16:00"
+  ],
+  "originalImage": "THRM-EX skin1.png",
+  "question": {
+    "x": 279,
+    "y": 350,
+    "width": 176,
+    "height": 176,
+    "sourceWidth": 880,
+    "sourceHeight": 880
+  },
+  "enabled": false
+}

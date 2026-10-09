@@ -1,0 +1,41 @@
+{
+  "id": "Touch-1-脚",
+  "title": "Touch 1",
+  "answers": [
+    "Touch",
+    "Touch精一"
+  ],
+  "hint": "莱塔尼亚出身的精英医疗，植物学与矿石病专家",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:5星",
+    "职业:医疗",
+    "分支:医师",
+    "位置:远程位",
+    "性别:女",
+    "获取途径:无",
+    "势力:罗德岛-精英干员",
+    "出身地:莱塔尼亚",
+    "种族:卡普里尼",
+    "生日:11月12日",
+    "身高:152cm",
+    "战斗经验:二十年",
+    "是否感染者:感染者",
+    "上线时间:2020-08-25 16:00"
+  ],
+  "originalImage": "Touch 1.png",
+  "question": {
+    "x": 393,
+    "y": 765,
+    "width": 255,
+    "height": 184,
+    "sourceWidth": 1024,
+    "sourceHeight": 1024
+  },
+  "enabled": true
+}

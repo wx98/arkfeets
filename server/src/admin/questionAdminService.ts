@@ -14,6 +14,7 @@ import {
   type QuestionRepository,
 } from "../question/questionRepository.js";
 import { difficulties } from "../question/types.js";
+import { initialTopics, topicIdSchema, topicSchema, topicsSchema, type Topic } from "../question/topics.js";
 import { StreamingZipReader } from "./streamingZipReader.js";
 import { storedZipSourceSize, writeStoredZip, type StoredZipEntry } from "./streamingZipWriter.js";
 
@@ -35,7 +36,7 @@ export const imageMetadataSchema = z.object({
   ).max(50).default([]),
 }).strict();
 
-const questionInputSchema = questionRecordSchema.omit({ id: true });
+const questionInputSchema = questionRecordSchema.omit({ id: true }).extend({ topic: z.array(topicIdSchema).default([]) });
 export type AdminQuestionRecord = QuestionRecord;
 
 export class QuestionAdminService {
@@ -69,6 +70,7 @@ export class QuestionAdminService {
 
   private buildLibrary() {
     const catalogue = this.readCatalogue();
+    const topics = this.readTopics();
     const report = this.repository.getValidationReport();
     const validationById = new Map(report.items.map((item) => [item.id, item]));
     const questions = catalogue.map((entry) => {
@@ -81,6 +83,7 @@ export class QuestionAdminService {
       const originalImage = info?.originalImage;
       return {
         id: entry.id,
+        topic: entry.topic,
         info,
         originalImageUrl: originalImage ? imageUrl(originalImage) : null,
         validation: validationById.get(entry.id) ?? { id: entry.id, valid: false, errors: ["未校验"] },
@@ -106,10 +109,49 @@ export class QuestionAdminService {
           validCount: related.filter((question) => question.validation.valid).length,
           invalidCount: related.filter((question) => !question.validation.valid).length,
           totalCount: related.length,
+          topicIds: [...new Set(related.flatMap((question) => question.topic))],
         };
       })
       .sort((left, right) => left.fileName.localeCompare(right.fileName));
-    return { ...report, images, questions, trash: this.listTrash() };
+    return { ...report, topics, images, questions, trash: this.listTrash() };
+  }
+
+  createTopic(name: string): Topic {
+    const normalized = topicSchema.shape.name.parse(name);
+    const topics = this.readTopics();
+    if (topics.some((topic) => topic.name.toLocaleLowerCase() === normalized.toLocaleLowerCase())) throw new Error("主题名称已存在");
+    const id = normalized.normalize("NFKC").replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-|-$/g, "").slice(0, 80);
+    if (!id || topics.some((topic) => topic.id === id)) throw new Error("主题 ID 已存在，请使用其他名称");
+    const topic = { id, name: normalized, isDefault: false };
+    this.writeTopics([...topics, topic]);
+    return topic;
+  }
+
+  updateTopic(id: string, input: { name: string; isDefault: boolean }): Topic {
+    const topics = this.readTopics();
+    const current = topics.find((topic) => topic.id === id);
+    if (!current) throw new Error("主题不存在");
+    const name = topicSchema.shape.name.parse(input.name);
+    if (topics.some((topic) => topic.id !== id && topic.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error("主题名称已存在");
+    if (!input.isDefault && current.isDefault && topics.length > 1) throw new Error("请先将其他主题设为默认主题");
+    const updated = topics.map((topic) => ({
+      ...topic,
+      name: topic.id === id ? name : topic.name,
+      isDefault: input.isDefault ? topic.id === id : topic.isDefault,
+    }));
+    this.writeTopics(updated);
+    return updated.find((topic) => topic.id === id)!;
+  }
+
+  deleteTopic(id: string): void {
+    const topics = this.readTopics();
+    const topic = topics.find((item) => item.id === id);
+    if (!topic) throw new Error("主题不存在");
+    if (topics.length === 1) throw new Error("至少保留一个主题");
+    if (topic.isDefault) throw new Error("请先将其他主题设为默认主题");
+    if (this.readCatalogue().some((entry) => entry.topic.includes(id))) throw new Error("主题仍有关联题目，无法删除");
+    if (this.listTrash().some((entry) => entry.topic.includes(id))) throw new Error("回收站中仍有此主题的题目，无法删除");
+    this.writeTopics(topics.filter((item) => item.id !== id));
   }
 
   createQuestion(input: unknown): string {
@@ -117,11 +159,14 @@ export class QuestionAdminService {
     if (!parsed.title || !parsed.question) throw new Error("请先填写标题并完成谜面裁切");
     this.assertImageExists(parsed.originalImage);
     const id = this.deriveQuestionId(parsed.title);
-    const record = questionRecordSchema.parse({ ...parsed, id });
+    const { topic, ...recordInput } = parsed;
+    const assignedTopics = this.resolveTopics(topic);
+    const record = questionRecordSchema.parse({ ...recordInput, id });
+    this.assertTopicImageUnique(record, assignedTopics);
     if (record.enabled) this.assertCanEnable(record);
     this.writeJsonAtomic(this.questionPath(id), record);
     try {
-      this.writeCatalogue([...this.readCatalogue(), { id, file: `question_data/${id}.json` }]);
+      this.writeCatalogue([...this.readCatalogue(), { id, file: `question_data/${id}.json`, topic: assignedTopics }]);
     } catch (error) {
       rmSync(this.questionPath(id), { force: true });
       throw error;
@@ -133,10 +178,17 @@ export class QuestionAdminService {
 
   updateQuestion(id: string, input: unknown): QuestionRecord {
     this.assertRegisteredId(id);
-    const record = questionRecordSchema.parse({ ...questionInputSchema.parse(input), id });
+    const { topic, ...recordInput } = questionInputSchema.parse(input);
+    const catalogue = this.readCatalogue();
+    const assignedTopics = topic.length ? this.resolveTopics(topic) : catalogue.find((entry) => entry.id === id)!.topic;
+    const record = questionRecordSchema.parse({ ...recordInput, id });
     this.assertImageExists(record.originalImage);
+    this.assertTopicImageUnique(record, assignedTopics, id);
     if (record.enabled) this.assertCanEnable(record);
     this.writeJsonAtomic(this.questionPath(id), record);
+    if (JSON.stringify(catalogue.find((entry) => entry.id === id)!.topic) !== JSON.stringify(assignedTopics)) {
+      this.writeCatalogue(catalogue.map((entry) => entry.id === id ? { ...entry, topic: assignedTopics } : entry));
+    }
     this.listCache = null;
     this.repository.reload();
     return record;
@@ -148,13 +200,17 @@ export class QuestionAdminService {
     const trashId = `${id}--${Date.now()}`;
     const questionPath = this.questionPath(id);
     const trashPath = this.trashPath(trashId);
-    renameSync(questionPath, trashPath);
+    const topic = catalogue.find((entry) => entry.id === id)!.topic;
+    this.writeJsonAtomic(this.trashTopicPath(trashId), topic);
+    try { renameSync(questionPath, trashPath); }
+    catch (error) { rmSync(this.trashTopicPath(trashId), { force: true }); throw error; }
     this.parsedFileCache.delete(questionPath);
     this.parsedFileCache.delete(trashPath);
     try {
       this.writeCatalogue(catalogue.filter((entry) => entry.id !== id));
     } catch (error) {
       renameSync(trashPath, questionPath);
+      rmSync(this.trashTopicPath(trashId), { force: true });
       throw error;
     }
     this.listCache = null;
@@ -166,6 +222,9 @@ export class QuestionAdminService {
     const trashPath = this.trashPath(trashId);
     if (!existsSync(trashPath)) throw new Error("回收站题目不存在");
     const record = questionRecordSchema.parse(JSON.parse(readFileSync(trashPath, "utf8")));
+    const topicPath = this.trashTopicPath(trashId);
+    const assignedTopics = this.resolveTopics(this.readTrashTopics(trashId));
+    this.assertTopicImageUnique(record, assignedTopics);
     if (this.readCatalogue().some((entry) => entry.id === record.id) || existsSync(this.questionPath(record.id))) {
       throw new Error(`无法还原：题目 ID ${record.id} 已被使用`);
     }
@@ -174,13 +233,14 @@ export class QuestionAdminService {
     this.parsedFileCache.delete(trashPath);
     this.parsedFileCache.delete(questionPath);
     try {
-      this.writeCatalogue([...this.readCatalogue(), { id: record.id, file: `question_data/${record.id}.json` }]);
+      this.writeCatalogue([...this.readCatalogue(), { id: record.id, file: `question_data/${record.id}.json`, topic: assignedTopics }]);
     } catch (error) {
       renameSync(questionPath, trashPath);
       throw error;
     }
     this.listCache = null;
     this.repository.reload();
+    rmSync(topicPath, { force: true });
     return { id: record.id };
   }
 
@@ -188,6 +248,7 @@ export class QuestionAdminService {
     const path = this.trashPath(trashId);
     if (!existsSync(path)) throw new Error("回收站题目不存在");
     rmSync(path, { force: true });
+    rmSync(this.trashTopicPath(trashId), { force: true });
     this.listCache = null;
     return { trashId };
   }
@@ -238,6 +299,7 @@ export class QuestionAdminService {
     const catalogue = this.readCatalogue();
     const entries: StoredZipEntry[] = [
       { archivePath: "catalogue.json", data: Buffer.from(`${JSON.stringify(catalogue, null, 2)}\n`) },
+      { archivePath: "topic.json", data: Buffer.from(`${JSON.stringify(this.readTopics(), null, 2)}\n`) },
     ];
     for (const entry of catalogue) {
       const path = this.questionPath(entry.id);
@@ -285,6 +347,18 @@ export class QuestionAdminService {
       const cataloguePath = cataloguePaths[0];
       const prefix = cataloguePath.slice(0, -"catalogue.json".length);
       const importedCatalogue = catalogueSchema.parse(JSON.parse((await files.get(cataloguePath)!.read()).toString("utf8")));
+      const topicEntry = files.get(`${prefix}topic.json`);
+      const importedTopics = topicEntry ? topicsSchema.parse(JSON.parse((await topicEntry.read()).toString("utf8"))) : [];
+      const mergedTopics = [...this.readTopics()];
+      const topicMap = new Map<string, string>();
+      for (const topic of importedTopics) {
+        const byName = mergedTopics.find((item) => item.name.toLocaleLowerCase() === topic.name.toLocaleLowerCase());
+        const byId = mergedTopics.find((item) => item.id === topic.id);
+        if (byName && byId && byName.id !== byId.id) throw new Error(`导入主题冲突：${topic.name}`);
+        if (byId && byId.name !== topic.name) throw new Error(`导入主题 ID 冲突：${topic.id}`);
+        if (!byName && !byId) mergedTopics.push({ ...topic, isDefault: false });
+        topicMap.set(topic.id, (byName ?? byId)?.id ?? topic.id);
+      }
       const current = this.readCatalogue();
       const currentIds = new Set(current.map((entry) => entry.id));
       const conflicts: string[] = [];
@@ -300,7 +374,27 @@ export class QuestionAdminService {
         if (record.id !== entry.id) throw new Error(`题目 ${entry.id} 的记录 ID 不一致`);
         const imageEntry = files.get(`${prefix}full_data/${record.originalImage}`);
         if (!imageEntry && !existsSync(this.imagePath(record.originalImage))) throw new Error(`题目 ${entry.id} 缺少原图 ${record.originalImage}`);
-        imported.push({ entry: { id: entry.id, file: `question_data/${entry.id}.json` }, record });
+        const assignedTopics = entry.topic.length
+          ? entry.topic.map((id) => {
+            const mapped = topicMap.get(id);
+            if (!mapped) throw new Error(`题目 ${entry.id} 引用了未定义的主题 ${id}`);
+            return mapped;
+          })
+          : [this.defaultTopicId()];
+        if (new Set(assignedTopics).size !== assignedTopics.length) throw new Error(`题目 ${entry.id} 的主题重复`);
+        imported.push({ entry: { id: entry.id, file: `question_data/${entry.id}.json`, topic: assignedTopics }, record });
+      }
+      const occupied = new Map<string, string>();
+      for (const entry of current) {
+        const record = this.readJsonCached(this.questionPath(entry.id), (raw) => questionRecordSchema.parse(raw));
+        for (const topic of entry.topic) occupied.set(`${topic}\0${record.originalImage}`, entry.id);
+      }
+      for (const item of imported) {
+        for (const topic of item.entry.topic) {
+          const key = `${topic}\0${item.record.originalImage}`;
+          if (occupied.has(key)) throw new Error(`主题 ${topic} 中原图 ${item.record.originalImage} 已被题目 ${occupied.get(key)} 使用`);
+          occupied.set(key, item.entry.id);
+        }
       }
       const imageEntries: Array<{ target: string; entry: ImportZipEntry }> = [];
       for (const [path, entry] of files) {
@@ -312,6 +406,7 @@ export class QuestionAdminService {
       }
       await mapConcurrent(imageEntries, 4, async ({ target, entry }) => entry.writeTo(target));
       for (const item of imported) this.writeJsonAtomic(this.questionPath(item.entry.id), item.record);
+      if (!existsSync(join(this.resourceDirectory, "topic.json")) || mergedTopics.length !== this.readTopics().length) this.writeTopics(mergedTopics);
       this.writeCatalogue([...current, ...imported.map((item) => item.entry)]);
       this.listCache = null;
       this.repository.reload();
@@ -323,8 +418,9 @@ export class QuestionAdminService {
 
   // 资源代际：catalogue 文件与三个资源目录的时间戳 + 尺寸签名，用于探测服务进程外的手工增删。
   private resourceGeneration(): string {
-    return [join(this.resourceDirectory, "catalogue.json"), this.fullDataDirectory, this.questionDataDirectory, this.questionTrashDirectory]
+    return [join(this.resourceDirectory, "catalogue.json"), join(this.resourceDirectory, "topic.json"), this.fullDataDirectory, this.questionDataDirectory, this.questionTrashDirectory]
       .map((path) => {
+        if (!existsSync(path)) return "missing";
         const stat = statSync(path);
         return `${stat.mtimeMs}:${stat.size}`;
       })
@@ -343,7 +439,7 @@ export class QuestionAdminService {
         const trashId = basename(entry.name, ".json");
         try {
           const info = this.readJsonCached(this.trashPath(trashId), (raw) => questionRecordSchema.parse(raw));
-          return [{ trashId, id: info.id, info, originalImageUrl: imageUrl(info.originalImage) }];
+          return [{ trashId, id: info.id, info, topic: this.readTrashTopics(trashId), originalImageUrl: imageUrl(info.originalImage) }];
         } catch {
           return [];
         }
@@ -352,7 +448,38 @@ export class QuestionAdminService {
   }
 
   private readCatalogue(): CatalogueEntry[] {
-    return this.readJsonCached(join(this.resourceDirectory, "catalogue.json"), (raw) => catalogueSchema.parse(raw));
+    const topics = this.readTopics();
+    const defaultId = topics.some((topic) => topic.id === initialTopics[0].id) ? initialTopics[0].id : this.defaultTopicId();
+    return this.readJsonCached(join(this.resourceDirectory, "catalogue.json"), (raw) => catalogueSchema.parse(raw))
+      .map((entry) => ({ ...entry, topic: entry.topic.length ? entry.topic : [defaultId] }));
+  }
+
+  private readTopics(): Topic[] {
+    const path = join(this.resourceDirectory, "topic.json");
+    return existsSync(path) ? this.readJsonCached(path, (raw) => topicsSchema.parse(raw)) : initialTopics;
+  }
+
+  private writeTopics(value: Topic[]): void {
+    this.writeJsonAtomic(join(this.resourceDirectory, "topic.json"), topicsSchema.parse(value));
+    this.listCache = null;
+    this.repository.reload();
+  }
+
+  private defaultTopicId(): string { return this.readTopics().find((topic) => topic.isDefault)!.id; }
+
+  private resolveTopics(input: string[]): string[] {
+    const assigned = input.length ? input : [this.defaultTopicId()];
+    const ids = new Set(this.readTopics().map((topic) => topic.id));
+    if (assigned.length !== new Set(assigned).size || assigned.some((id) => !ids.has(id))) throw new Error("题目主题重复或不存在");
+    return assigned;
+  }
+
+  private assertTopicImageUnique(record: QuestionRecord, topic: string[], exceptId = ""): void {
+    for (const entry of this.readCatalogue()) {
+      if (entry.id === exceptId || !entry.topic.some((id) => topic.includes(id))) continue;
+      const other = this.readJsonCached(this.questionPath(entry.id), (raw) => questionRecordSchema.parse(raw));
+      if (other.originalImage === record.originalImage) throw new Error(`原图 ${record.originalImage} 在主题 ${entry.topic.find((id) => topic.includes(id))} 中已有题目 ${entry.id}`);
+    }
   }
 
   private writeCatalogue(value: CatalogueEntry[]): void {
@@ -427,6 +554,13 @@ export class QuestionAdminService {
     const target = resolve(this.questionTrashDirectory, `${trashId}.json`);
     if (!target.startsWith(resolve(this.questionTrashDirectory) + sep)) throw new Error("题目路径超出 question_trash 目录");
     return target;
+  }
+
+  private trashTopicPath(trashId: string): string { return `${this.trashPath(trashId)}.topics`; }
+
+  private readTrashTopics(trashId: string): string[] {
+    const path = this.trashTopicPath(trashId);
+    return existsSync(path) ? z.array(topicIdSchema).min(1).parse(JSON.parse(readFileSync(path, "utf8"))) : [this.defaultTopicId()];
   }
 
   private imagePath(name: string): string { return join(this.fullDataDirectory, basename(name)); }

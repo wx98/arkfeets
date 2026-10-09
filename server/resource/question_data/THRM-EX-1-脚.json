@@ -1,0 +1,34 @@
+{
+  "id": "THRM-EX-1-脚",
+  "title": "THRM-EX 1",
+  "answers": [
+    "THRM-EX",
+    "THRM-EX精一"
+  ],
+  "hint": "梅尔参与改装的热情过头的熔岩猫作业平台",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:1星",
+    "职业:特种",
+    "分支:处决者",
+    "位置:近战位",
+    "性别:男",
+    "获取途径:公开招募 主线剧情 活动获得",
+    "上线时间:2020-05-01 16:00"
+  ],
+  "originalImage": "THRM-EX 1.png",
+  "question": {
+    "x": 540,
+    "y": 476,
+    "width": 310,
+    "height": 205,
+    "sourceWidth": 1024,
+    "sourceHeight": 1024
+  },
+  "enabled": false
+}

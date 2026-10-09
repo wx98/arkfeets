@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ChevronRight, Database, History, LogOut, Radio, Settings2 } from "lucide-vue-next";
+import { ArrowLeft, ChevronRight, Database, History, Layers3, LogOut, Radio, Settings2 } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
@@ -72,9 +72,10 @@ async function logout() {
       <p v-if="error" class="admin-hub__error" role="alert">{{ error }}</p>
     </section>
     <section v-else class="admin-hub__content">
-      <div class="admin-hub__section-title"><span>管理模块</span><small>03 / SECTIONS</small></div>
+      <div class="admin-hub__section-title"><span>管理模块</span><small>04 / SECTIONS</small></div>
       <nav aria-label="后台管理模块">
         <RouterLink to="/admin/questions"><Database :size="22" /><span>题库管理</span><ChevronRight :size="19" /></RouterLink>
+        <RouterLink to="/admin/topics"><Layers3 :size="22" /><span>主题管理</span><ChevronRight :size="19" /></RouterLink>
         <RouterLink to="/multi/records"><History :size="22" /><span>对局记录</span><ChevronRight :size="19" /></RouterLink>
         <RouterLink to="/multi/live-monitor"><Radio :size="22" /><span>弹幕监控</span><ChevronRight :size="19" /></RouterLink>
       </nav>

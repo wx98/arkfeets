@@ -68,6 +68,14 @@ export class QuestionAdminService {
     return value;
   }
 
+  listTopics() {
+    const counts = new Map(this.readTopics().map((topic) => [topic.id, 0]));
+    for (const entry of this.readCatalogue()) {
+      for (const id of entry.topic) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    return this.readTopics().map((topic) => ({ ...topic, questionCount: counts.get(topic.id) ?? 0 }));
+  }
+
   private buildLibrary() {
     const catalogue = this.readCatalogue();
     const topics = this.readTopics();

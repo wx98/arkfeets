@@ -6,6 +6,7 @@ import SoloPlayView from "./views/SoloPlayView.vue";
 import SoloSetupView from "./views/SoloSetupView.vue";
 import AdminView from "./views/AdminView.vue";
 import AdminDashboardView from "./views/AdminDashboardView.vue";
+import TopicManagementView from "./views/TopicManagementView.vue";
 import LiveMonitorView from "./views/LiveMonitorView.vue";
 import GameRecordsView from "./views/GameRecordsView.vue";
 
@@ -22,6 +23,7 @@ export const router = createRouter({
     { path: "/multi/:roomCode", component: MultiplayerRoomView },
     { path: "/admin", component: AdminDashboardView },
     { path: "/admin/questions", component: AdminView },
+    { path: "/admin/topics", component: TopicManagementView },
     {
       path: "/:pathMatch(.*)*",
       redirect: "/",

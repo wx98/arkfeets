@@ -103,6 +103,25 @@ describe("QuestionAdminService", () => {
     expect(() => service.createTopic("立绘图")).toThrow("主题名称已存在");
   });
 
+  it("assigns the current default topic to new questions", () => {
+    const service = createService();
+    const topic = service.createTopic("造型");
+    service.updateTopic(topic.id, { name: topic.name, isDefault: true });
+    service.createQuestion({ ...validInput(["答案"], "new.png"), title: "新题", enabled: false });
+    expect(service.list().questions.find((question) => question.id === "新题")?.topic).toEqual([topic.id]);
+  });
+
+  it("keeps a topic while a deleted question still references it", () => {
+    const service = createService();
+    const topic = service.createTopic("造型");
+    service.createQuestion({ ...validInput(["答案"], "new.png"), title: "新题", topic: [topic.id], enabled: false });
+    const deleted = service.deleteQuestion("新题");
+    expect(() => service.deleteTopic(topic.id)).toThrow("回收站");
+    service.permanentlyDeleteQuestion(deleted.trashId);
+    service.deleteTopic(topic.id);
+    expect(service.listTopics().map((item) => item.id)).toEqual(["脚"]);
+  });
+
   it("allows the same image in different topics but not twice in one topic", () => {
     const service = createService();
     const topic = service.createTopic("造型");

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Database, Download, FilePlus2,
-  Eye, FolderOpen, FolderUp, Image as ImageIcon, Images, ListTree, LoaderCircle, LogIn, LogOut, Maximize2,
+  Eye, FolderOpen, FolderUp, Image as ImageIcon, Images, Layers3, ListTree, LoaderCircle, LogIn, LogOut, Maximize2,
   PanelLeftClose, PanelLeftOpen, Plus, RotateCcw, Save, Scissors, Search, Trash2, Upload, X, ZoomIn, ZoomOut,
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
@@ -27,7 +27,9 @@ interface LibraryImage {
   validCount: number;
   invalidCount: number;
   totalCount: number;
+  topicIds: string[];
 }
+interface Topic { id: string; name: string; isDefault: boolean }
 interface QuestionRecord {
   id: string;
   title: string;
@@ -38,23 +40,27 @@ interface QuestionRecord {
   originalImage: string;
   question: CropRect | null;
   enabled: boolean;
+  topic: string[];
 }
 interface LibraryQuestion {
   id: string;
-  info: QuestionRecord | null;
+  info: Omit<QuestionRecord, "topic"> | null;
+  topic: string[];
   originalImageUrl: string | null;
   validation: { valid: boolean; errors: string[] };
 }
 interface TrashedQuestion {
   trashId: string;
   id: string;
-  info: QuestionRecord;
+  info: Omit<QuestionRecord, "topic">;
+  topic: string[];
   originalImageUrl: string;
 }
 interface Library {
   validCount: number;
   invalidCount: number;
   images: LibraryImage[];
+  topics: Topic[];
   questions: LibraryQuestion[];
   trash?: TrashedQuestion[];
 }
@@ -71,6 +77,9 @@ const library = ref<Library>();
 const isAuthenticated = computed(() => Boolean(token.value || library.value));
 const mode = ref<"images" | "questions" | "trash">("images");
 const searchText = ref("");
+const activeTopicId = ref("");
+const onlyWithoutQuestions = ref(false);
+const onlyAvailableInTopic = ref(false);
 const sidebarCollapsed = ref(false);
 const selectedImageName = ref("");
 const expandedImageName = ref("");
@@ -128,8 +137,12 @@ const questionsByImage = computed(() => {
   return groups;
 });
 const relatedQuestions = (image: LibraryImage) => questionsByImage.value.get(image.fileName) ?? [];
+const defaultTopic = computed(() => library.value?.topics.find((topic) => topic.isDefault));
+const topicOccupant = (image: LibraryImage) => relatedQuestions(image).find((question) => question.topic.includes(activeTopicId.value));
 const normalizedNeedle = computed(() => normalizeSearch(searchText.value));
 const filteredImages = computed(() => (library.value?.images ?? []).filter((image) => {
+  if (onlyWithoutQuestions.value && image.totalCount > 0) return false;
+  if (onlyAvailableInTopic.value && activeTopicId.value && image.topicIds.includes(activeTopicId.value)) return false;
   if (!normalizedNeedle.value) return true;
   const related = relatedQuestions(image);
   return normalizeSearch([
@@ -139,6 +152,7 @@ const filteredImages = computed(() => (library.value?.images ?? []).filter((imag
   ].join(" ")).includes(normalizedNeedle.value);
 }));
 const filteredQuestions = computed(() => (library.value?.questions ?? []).filter((question) => {
+  if (activeTopicId.value && !question.topic.includes(activeTopicId.value)) return false;
   if (!normalizedNeedle.value) return true;
   return normalizeSearch([
     question.id, question.info?.title, question.info?.originalImage, question.info?.hint,
@@ -167,7 +181,15 @@ const modeStats = computed(() => mode.value === "images"
   : mode.value === "questions"
     ? { total: library.value?.questions.length ?? 0, valid: library.value?.validCount ?? 0, invalid: library.value?.invalidCount ?? 0 }
     : { total: trashedQuestions.value.length, valid: trashedQuestions.value.length, invalid: 0 });
-const canSaveQuestion = computed(() => Boolean(form.value.title.trim() && form.value.question && form.value.originalImage));
+const topicConflict = computed(() => {
+  if (!form.value.originalImage) return "";
+  const image = library.value?.images.find((item) => item.fileName === form.value.originalImage);
+  if (!image) return "";
+  const other = relatedQuestions(image).find((question) => question.id !== selectedQuestionId.value && question.topic.some((id) => form.value.topic.includes(id)));
+  const topic = library.value?.topics.find((item) => other?.topic.includes(item.id) && form.value.topic.includes(item.id));
+  return other && topic ? `${topic.name}主题中此原图已有题目“${other.info?.title ?? other.id}”` : "";
+});
+const canSaveQuestion = computed(() => Boolean(form.value.title.trim() && form.value.question && form.value.originalImage && form.value.topic.length && !topicConflict.value));
 const imageSelectOptions = computed(() => {
   const needle = normalizeSearch(imageSelectQuery.value);
   return (library.value?.images ?? []).filter((image) => !needle || normalizeSearch(image.fileName).includes(needle));
@@ -231,6 +253,7 @@ async function login() {
 
 async function loadLibrary(preferredQuestion = selectedQuestionId.value, preferredImage = selectedImageName.value) {
   library.value = await api<Library>("/api/admin/library");
+  if (!library.value.topics.some((topic) => topic.id === activeTopicId.value)) activeTopicId.value = library.value.topics.find((topic) => topic.isDefault)?.id ?? "";
   if (preferredQuestion) {
     const question = library.value.questions.find((item) => item.id === preferredQuestion);
     if (question) { await selectQuestion(question); return; }
@@ -281,7 +304,7 @@ async function selectQuestion(question: LibraryQuestion) {
   isNew.value = false;
   autoFilledTitle.value = "";
   imageSelectOpen.value = false;
-  form.value = clone(question.info);
+  form.value = { ...clone(question.info), topic: [...question.topic] };
   if (!form.value.answers.length) form.value.answers = [""];
   tagText.value = form.value.tags.join("，");
   cropConfirmed.value = Boolean(form.value.question);
@@ -302,6 +325,7 @@ function beginQuestion(image: LibraryImage) {
     difficulty: [...image.metadata.difficulty],
     tags: metadataTagsToQuestionTags(image.metadata.tags),
     originalImage: image.fileName,
+    topic: defaultTopic.value ? [defaultTopic.value.id] : [],
   };
   autoFilledTitle.value = form.value.title;
   imageSelectOpen.value = false;
@@ -418,6 +442,7 @@ function applyCropResult(result: { coordinates: { left: number; top: number; wid
 async function saveQuestion() {
   if (!canSaveQuestion.value) { error.value = "请先填写标题并确认谜面裁切"; return; }
   if (!cropConfirmed.value) { error.value = "请先保存裁切，再保存题目"; return; }
+  if (topicConflict.value) { error.value = topicConflict.value; return; }
   if (isNew.value && duplicateTitleId.value) { error.value = `已存在相同标题的题目（ID：${duplicateTitleId.value}），请修改标题后再创建`; return; }
   await perform(async () => {
     const payload = {
@@ -429,6 +454,7 @@ async function saveQuestion() {
       originalImage: form.value.originalImage,
       question: form.value.question,
       enabled: form.value.enabled,
+      topic: [...form.value.topic],
     };
     if (isNew.value) {
       const result = await api<{ id: string }>("/api/admin/questions", { method: "POST", body: JSON.stringify(payload) });
@@ -696,7 +722,7 @@ function emptyMetadata(): ImageMetadata {
   return { name: "", answers: [""], hint: "", difficulty: ["simple", "medium", "hard", "hell"], tags: [] };
 }
 function emptyQuestion(): QuestionRecord {
-  return { id: "", title: "", answers: [""], hint: "", difficulty: ["simple", "medium", "hard", "hell"], tags: [], originalImage: "", question: null, enabled: false };
+  return { id: "", title: "", answers: [""], hint: "", difficulty: ["simple", "medium", "hard", "hell"], tags: [], originalImage: "", question: null, enabled: false, topic: [] };
 }
 function metadataTagsToRows(tags: Array<Record<string, string>>): MetadataTagRow[] {
   return tags.flatMap((tag) => Object.entries(tag).map(([key, value]) => ({ key, value })));
@@ -796,12 +822,24 @@ function questionPreviewStyle(question: LibraryQuestion) {
           <label class="icon-button" title="导入题库"><Upload :size="18" /><input type="file" accept=".zip,application/zip" :disabled="busy" @change="importArchive" /></label>
           <button class="icon-button" title="导出题库" :disabled="busy" @click="exportArchive"><Download :size="18" /></button>
         </div>
+        <button class="admin-topics-link" @click="router.push('/admin/topics')"><Layers3 :size="16" />管理主题</button>
         <div v-if="transferLabel" class="admin-transfer-progress" role="status" aria-live="polite">
           <div><LoaderCircle :size="14" class="is-spinning" /><span>{{ transferLabel }}</span><b v-if="transferProgress !== null">{{ Math.round(transferProgress) }}%</b></div>
           <progress v-if="transferProgress !== null" :value="transferProgress" max="100" />
           <span v-else class="admin-transfer-progress__indeterminate"><i /></span>
         </div>
         <div class="admin-search"><Search :size="16" /><input v-model="searchText" :placeholder="mode === 'images' ? '搜索文件、默认信息或关联题目' : mode === 'trash' ? '搜索回收站题目、答案或原图' : '搜索标题、答案、标签或原图'" /></div>
+        <div v-if="mode !== 'trash'" class="admin-topic-filter">
+          <label for="admin-topic-select">主题</label>
+          <select id="admin-topic-select" v-model="activeTopicId">
+            <option v-if="mode === 'questions'" value="">全部主题</option>
+            <option v-for="topic in library.topics" :key="topic.id" :value="topic.id">{{ topic.name }}{{ topic.isDefault ? ' · 默认' : '' }}</option>
+          </select>
+        </div>
+        <div v-if="mode === 'images'" class="admin-image-filters">
+          <label class="topic-switch"><input v-model="onlyWithoutQuestions" type="checkbox" /><span />仅看全局无题目</label>
+          <label class="topic-switch"><input v-model="onlyAvailableInTopic" type="checkbox" :disabled="!activeTopicId" /><span />仅看本主题未占用</label>
+        </div>
 
         <nav v-if="mode === 'images'" class="asset-list" aria-label="原图列表">
           <div v-for="image in filteredImages" :key="image.fileName" class="asset-group" :class="{ active: selectedImageName === image.fileName }">
@@ -810,6 +848,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
                 <ImageIcon :size="16" />
                 <span>{{ imageLabel(image.fileName) }}</span>
               </button>
+              <span class="asset-topic-status" :class="{ occupied: topicOccupant(image) }" :title="topicOccupant(image) ? `本主题已有：${topicOccupant(image)?.info?.title ?? topicOccupant(image)?.id}` : '本主题尚无题目'">{{ topicOccupant(image) ? '已占用' : '可新建' }}</span>
               <button class="asset-row__add" title="基于此原图新增题目" @click="beginQuestion(image)"><Plus :size="14" /></button>
               <small>{{ image.validCount }}/{{ image.totalCount }}</small>
               <button class="asset-row__expand" :title="expandedImageName === image.fileName ? '收起题目' : '展开题目'" @click="toggleImage(image)"><ChevronDown :size="15" :class="{ open: expandedImageName === image.fileName }" /></button>
@@ -832,6 +871,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
             <span>{{ question.info?.title || question.id }}</span>
             <small>{{ question.info?.originalImage ? imageLabel(question.info.originalImage) : '未关联原图' }}</small>
           </button>
+          <p v-if="!filteredQuestions.length" class="question-list__empty">没有匹配的题目</p>
         </nav>
 
         <nav v-else class="question-list trash-list" aria-label="回收站题目列表">
@@ -934,6 +974,8 @@ function questionPreviewStyle(question: LibraryQuestion) {
               </div>
             </div>
             <label class="wide">标签<input v-model="tagText" placeholder="使用逗号分隔" /></label>
+            <fieldset class="wide topic-checks"><legend>所属主题</legend><label v-for="topic in library.topics" :key="topic.id"><input v-model="form.topic" type="checkbox" :value="topic.id" />{{ topic.name }}<small v-if="topic.isDefault">默认</small></label></fieldset>
+            <p v-if="topicConflict" class="field-error wide">{{ topicConflict }}</p>
             <fieldset class="wide difficulty-checks"><legend>适用难度</legend><label v-for="item in difficultyOptions" :key="item.value"><input v-model="form.difficulty" type="checkbox" :value="item.value" />{{ item.label }}</label></fieldset>
           </div>
         </section>
@@ -952,7 +994,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
       <article v-else-if="mode === 'images' && selectedImage" ref="adminEditor" class="admin-editor asset-editor">
         <header><div><p class="eyebrow">SOURCE IMAGE / FULL DATA</p><h2>{{ selectedImage.fileName }}</h2></div><button class="button button--primary" @click="beginQuestion(selectedImage)"><FilePlus2 :size="17" />新增题目</button></header>
         <div class="asset-overview">
-          <img :src="selectedImage.url" :alt="selectedImage.fileName" />
+          <button type="button" class="asset-overview__image" title="查看完整原图" @click="imageViewer = 'original'"><img :src="selectedImage.url" :alt="selectedImage.fileName" /><Maximize2 :size="18" /></button>
           <dl><div><dt>有效问题</dt><dd>{{ selectedImage.validCount }}</dd></div><div><dt>异常问题</dt><dd>{{ selectedImage.invalidCount }}</dd></div><div><dt>总问题</dt><dd>{{ selectedImage.totalCount }}</dd></div></dl>
         </div>
         <section class="admin-form-section">
@@ -987,7 +1029,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
         <p>移入回收站的题目会显示在这里，可随时还原或彻底删除。</p>
       </article>
 
-      <article v-else class="admin-empty"><Database :size="42" /><h2>题库为空</h2><p>上传原图后即可开始创建题目。</p></article>
+      <article v-else class="admin-empty"><Database :size="42" /><h2>{{ mode === 'questions' ? '尚未选择题目' : '题库为空' }}</h2></article>
     </section>
     <section v-else class="center-state">正在读取题库...</section>
     <Teleport to="body">

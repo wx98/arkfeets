@@ -5,10 +5,9 @@ import {
   PanelLeftClose, PanelLeftOpen, Plus, RotateCcw, Save, Scissors, Search, Trash2, Upload, X, ZoomIn, ZoomOut,
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { Cropper } from "vue-advanced-cropper";
-import "vue-advanced-cropper/dist/style.css";
 import { useRouter } from "vue-router";
 import CropImageCanvas from "../components/CropImageCanvas.vue";
+import ImageCropEditor from "../components/ImageCropEditor.vue";
 import type { CropRect, Difficulty } from "../types";
 
 interface ImageMetadata {
@@ -93,7 +92,7 @@ const metadataForm = ref<ImageMetadata>(emptyMetadata());
 const metadataTagRows = ref<MetadataTagRow[]>([]);
 const workbench = ref<HTMLElement>();
 const adminEditor = ref<HTMLElement>();
-const cropper = ref<InstanceType<typeof Cropper>>();
+const cropper = ref<InstanceType<typeof ImageCropEditor>>();
 const viewerCanvas = ref<InstanceType<typeof CropImageCanvas>>();
 const cropAspect = ref<number | undefined>();
 const cropConfirmed = ref(false);
@@ -116,6 +115,7 @@ const imageSelectQuery = ref("");
 const imageSelectRoot = ref<HTMLElement>();
 // 标题自动预填值：标题为空或仍等于预填值时，换图后标题跟随新图名；用户手动改过则不覆盖。
 const autoFilledTitle = ref("");
+let previousBodyOverflow = "";
 
 const selectedImage = computed(() => library.value?.images.find((image) => image.fileName === selectedImageName.value));
 const selectedQuestion = computed(() => library.value?.questions.find((question) => question.id === selectedQuestionId.value));
@@ -192,6 +192,9 @@ const topicConflict = computed(() => {
   return other && topic ? `${topic.name}主题中此原图已有题目“${other.info?.title ?? other.id}”` : "";
 });
 const canSaveQuestion = computed(() => Boolean(form.value.title.trim() && form.value.question && form.value.originalImage && form.value.topic.length && !topicConflict.value));
+const canQuickCreate = computed(() => isNew.value && cropConfirmed.value && canSaveQuestion.value
+  && !duplicateTitleId.value && form.value.answers.some((answer) => answer.trim())
+  && form.value.difficulty.length > 0 && !busy.value);
 const imageSelectOptions = computed(() => {
   const needle = normalizeSearch(imageSelectQuery.value);
   return (library.value?.images ?? []).filter((image) => !needle || normalizeSearch(image.fileName).includes(needle));
@@ -215,6 +218,7 @@ onMounted(() => {
   void restoreSession();
 });
 onBeforeUnmount(() => {
+  if (cropDialogOpen.value) document.body.style.overflow = previousBodyOverflow;
   window.removeEventListener("click", handleGlobalClick);
   window.removeEventListener("keydown", handleDialogKeydown);
 });
@@ -379,8 +383,7 @@ function chooseQuestionImage(image: LibraryImage) {
 function restoreCrop() {
   const crop = form.value.question;
   if (!crop) return;
-  const instance = cropper.value as unknown as { setCoordinates?: (coordinates: { left: number; top: number; width: number; height: number }) => void };
-  instance?.setCoordinates?.({ left: crop.x, top: crop.y, width: crop.width, height: crop.height });
+  cropper.value?.setCoordinates({ left: crop.x, top: crop.y, width: crop.width, height: crop.height });
 }
 
 function handleCropReady() {
@@ -388,8 +391,15 @@ function handleCropReady() {
   void nextTick(() => { cropReady.value = true; });
 }
 
+function zoomCrop(factor: number) {
+  if (!cropReady.value) return;
+  cropper.value?.zoom(factor);
+}
+
 function openCropDialog() {
   if (!currentImageUrl.value) return;
+  previousBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
   cropReady.value = false;
   draftCrop.value = form.value.question ? clone(form.value.question) : null;
   cropDialogOpen.value = true;
@@ -398,6 +408,7 @@ function openCropDialog() {
 }
 
 function closeCropDialog() {
+  document.body.style.overflow = previousBodyOverflow;
   cropDialogOpen.value = false;
   cropReady.value = false;
   draftCrop.value = null;
@@ -467,6 +478,12 @@ async function saveQuestion() {
       await loadLibrary(selectedQuestionId.value, payload.originalImage);
     }
   }, form.value.enabled ? "题目已保存并启用" : "题目已保存");
+}
+
+async function quickCreateQuestion() {
+  if (!canQuickCreate.value) return;
+  form.value.enabled = true;
+  await saveQuestion();
 }
 
 async function deleteQuestion() {
@@ -958,6 +975,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
             <button type="button" :disabled="!currentImageUrl" @click="imageViewer = 'original'"><Eye :size="16" />查看原图</button>
             <button type="button" :disabled="!currentImageUrl || !form.question" @click="imageViewer = 'crop'"><ZoomIn :size="16" />查看谜面</button>
             <button type="button" :disabled="busy || !currentImageUrl" @click="openCropDialog"><Scissors :size="16" />裁剪谜面</button>
+            <button v-if="isNew" type="button" class="image-action-group__quick" :disabled="!canQuickCreate" title="保存并启用题目" @click="quickCreateQuestion"><Plus :size="16" />快速创建</button>
           </div>
         </section>
 
@@ -1076,14 +1094,18 @@ function questionPreviewStyle(question: LibraryQuestion) {
             :crop="imageViewer === 'crop' ? form.question : null" interactive :animate="imageViewer === 'crop'" />
         </section>
       </div>
-      <div v-if="cropDialogOpen && currentImageUrl" class="admin-modal-backdrop" @click.self="closeCropDialog">
+      <div v-if="cropDialogOpen && currentImageUrl" class="admin-modal-backdrop admin-modal-backdrop--crop">
         <section class="admin-crop-dialog" role="dialog" aria-modal="true" aria-label="裁剪谜面">
           <header class="admin-modal-header">
             <div><small>QUESTION CROP</small><strong>裁剪谜面</strong></div>
-            <button class="icon-button" title="取消裁剪" aria-label="取消裁剪" @click="closeCropDialog"><X :size="20" /></button>
+            <div class="admin-viewer-controls">
+              <button class="icon-button" title="缩小原图" aria-label="缩小原图" :disabled="!cropReady" @click="zoomCrop(1 / 1.25)"><ZoomOut :size="18" /></button>
+              <button class="icon-button" title="放大原图" aria-label="放大原图" :disabled="!cropReady" @click="zoomCrop(1.25)"><ZoomIn :size="18" /></button>
+              <button class="icon-button" title="取消裁剪" aria-label="取消裁剪" @click="closeCropDialog"><X :size="20" /></button>
+            </div>
           </header>
-          <Cropper ref="cropper" class="question-cropper" :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }"
-            image-restriction="stencil" @ready="handleCropReady" @change="handleCropChange" />
+          <ImageCropEditor ref="cropper" class="question-cropper" :src="currentImageUrl" :aspect-ratio="cropAspect"
+            @ready="handleCropReady" @change="handleCropChange" />
           <p v-if="error" class="admin-crop-dialog__error" role="alert">{{ error }}</p>
           <footer class="admin-crop-dialog__footer">
             <div class="crop-ratios" role="group" aria-label="裁切比例">

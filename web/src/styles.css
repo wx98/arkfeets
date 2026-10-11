@@ -332,8 +332,6 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
 .crop-ratios button:last-child { border-right: 0; }
 .crop-ratios button.active { color: var(--ink); background: var(--signal); font-weight: 900; }
 .crop-ratios button:disabled { color: #9ba09e; background: #e4e7e5; cursor: not-allowed; }
-.question-cropper { height: min(68vh,680px); min-height: 300px; border: 1px solid #4b5051; }
-.question-cropper, .question-cropper .vue-advanced-cropper__background { background-color: #f2f4f3; background-image: conic-gradient(#d5d9d7 25%, #f2f4f3 0 50%, #d5d9d7 0 75%, #f2f4f3 0); background-size: 18px 18px; }
 .crop-empty { height: 320px; display: grid; place-content: center; justify-items: center; gap: 9px; color: #868c8a; background: #e8eae7; border: 1px dashed #9ea3a1; text-align: center; }
 .crop-empty strong { color: var(--ink); }
 .crop-empty span { font-size: 11px; }
@@ -425,12 +423,14 @@ body .question-hover-preview,
 .crop-image-canvas.is-interactive { cursor: grab; }
 .crop-image-canvas.is-interactive:active { cursor: grabbing; }
 .crop-preview--empty { width: 100%; height: 100%; display: grid; place-items: center; color: #858b89; font-size: 11px; }
-.image-action-group { display: flex; flex-wrap: wrap; width: fit-content; border: 1px solid #8e9692; }
+.image-action-group { display: flex; flex-wrap: wrap; width: 100%; border: 1px solid #8e9692; }
 .image-action-group button { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; padding: 0 13px; border: 0; color: var(--ink); background: #fff; font-size: 11px; font-weight: 800; cursor: pointer; }
 .image-action-group button + button { border-left: 1px solid #bfc4c1; }
 .image-action-group button:hover:not(:disabled) { background: var(--signal); }
 .image-action-group button:disabled { color: #a0a6a3; background: #e7eae7; cursor: not-allowed; }
+.image-action-group .image-action-group__quick { margin-left: auto; border-left: 1px solid #bfc4c1; }
 .admin-modal-backdrop { position: fixed; z-index: 200; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(11,15,14,.82); }
+.admin-modal-backdrop--crop { padding: 0; }
 .admin-image-viewer, .admin-crop-dialog { width: min(1180px,100%); max-height: 94dvh; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #828a85; background: #181c1c; box-shadow: 0 24px 70px rgba(0,0,0,.4); }
 .admin-image-viewer { height: min(880px,94dvh); }
 .admin-modal-header { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 16px; color: #f4f6f4; border-bottom: 1px solid #525b56; }
@@ -441,8 +441,17 @@ body .question-hover-preview,
 .admin-modal-header .icon-button { flex: 0 0 36px; width: 36px; min-height: 36px; color: #f4f6f4; border-color: #66706a; background: #252b29; }
 .admin-modal-header .icon-button:hover { color: var(--ink); background: var(--signal); }
 .admin-image-viewer__canvas { flex: 1; min-height: 0; }
-.admin-crop-dialog { padding-bottom: 0; }
-.admin-crop-dialog .question-cropper { flex: 1; min-height: min(300px,50vh); }
+.admin-crop-dialog { width: 100vw; height: 100dvh; max-height: none; padding-bottom: 0; border: 0; }
+.admin-crop-dialog .question-cropper { flex: 1; min-height: 0; }
+.image-crop-editor { overflow: auto; background: repeating-conic-gradient(#aeb4b0 0 25%, #d2d7d2 0 50%) 0 0 / 20px 20px; }
+.image-crop-editor__stage { position: relative; min-width: 100%; min-height: 100%; }
+.image-crop-editor__stage > img { position: absolute; display: block; max-width: none; pointer-events: none; user-select: none; }
+.image-crop-editor__frame { position: absolute; z-index: 1; box-sizing: border-box; border: 2px solid var(--signal); box-shadow: 0 0 0 9999px rgba(10,14,13,.38); cursor: move; touch-action: none; }
+.image-crop-editor__handle { position: absolute; width: 14px; height: 14px; border: 2px solid #1d2420; background: var(--signal); touch-action: none; }
+.image-crop-editor__handle--nw { left: -8px; top: -8px; cursor: nwse-resize; }
+.image-crop-editor__handle--ne { right: -8px; top: -8px; cursor: nesw-resize; }
+.image-crop-editor__handle--sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
+.image-crop-editor__handle--se { right: -8px; bottom: -8px; cursor: nwse-resize; }
 .admin-crop-dialog__error { margin: 0; padding: 9px 16px; color: #a63828; background: #fff0ec; font-size: 12px; }
 .admin-crop-dialog__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: #eef0ed; }
 .admin-crop-dialog__actions { display: flex; gap: 8px; }
@@ -546,16 +555,19 @@ body .question-hover-preview,
   .metadata-tag-row { grid-template: "key delete" auto "value delete" auto / minmax(0,1fr) 40px; }
   .difficulty-checks { grid-template-columns: 1fr 1fr; }
   .crop-ratios { grid-template-columns: repeat(3,1fr); }
-  .question-cropper, .crop-empty { height: min(56vh,420px); }
+  .crop-empty { height: min(56vh,420px); }
   .admin-publish { align-items: stretch; flex-direction: column; }
   .admin-publish-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .admin-publish-actions .button:only-child { grid-column: 1 / -1; }
   .admin-publish .button { width: 100%; }
   .image-dual-preview, .asset-overview { grid-template-columns: 1fr; }
-  .image-action-group { width: 100%; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .image-action-group { width: 100%; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
   .image-action-group button { justify-content: center; min-width: 0; padding-inline: 5px; font-size: 10px; }
+  .image-action-group .image-action-group__quick { margin-left: 0; }
   .admin-modal-backdrop { padding: 8px; }
-  .admin-image-viewer, .admin-crop-dialog { max-height: 96dvh; }
+  .admin-modal-backdrop--crop { padding: 0; }
+  .admin-image-viewer { max-height: 96dvh; }
+  .admin-crop-dialog { max-height: none; }
   .admin-image-viewer { height: 88dvh; }
   .admin-modal-header { padding-inline: 10px; }
   .admin-crop-dialog__footer { align-items: stretch; flex-direction: column; }

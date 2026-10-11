@@ -226,19 +226,27 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
 .admin-summary span:first-child svg { color: var(--signal); }
 .admin-summary span:last-child svg { color: #ff9f43; }
 .admin-summary b { grid-column: 1 / -1; font-size: 21px; color: #fff; }
-.admin-toolbar { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; margin-bottom: 10px; }
+.admin-toolbar { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; }
 .admin-toolbar .icon-button { width: 100%; min-width: 0; border-color: #575c5d; background: #2a2d30; }
-.admin-topics-link { width: 100%; min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 10px; border: 1px solid #575c5d; color: #d8dcda; background: #2a2d30; cursor: pointer; }
-.admin-topics-link:hover { color: var(--ink); background: var(--signal); }
-.admin-topic-filter { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 10px; margin: -4px 0 10px; color: #c2c8c5; font-size: 12px; }
-.admin-topic-filter select { min-width: 0; height: 36px; padding: 0 8px; border: 1px solid #575c5d; color: #fff; background: #292c2f; }
-.admin-image-filters { display: grid; gap: 7px; margin-bottom: 10px; }
-.topic-switch { display: flex; align-items: center; gap: 9px; color: #c2c8c5; font-size: 11px; cursor: pointer; }
+.admin-tools { margin: -6px 0 10px; border: 1px solid #575c5d; }
+.admin-tools__toggle { width: 100%; height: 31px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 0; color: #d8dcda; background: #292c2f; text-align: left; cursor: pointer; }
+.admin-tools__toggle > svg { transition: transform .15s ease; }
+.admin-tools__toggle > svg.open { transform: rotate(180deg); }
+.admin-tools__toggle span { font-size: 11px; }
+.admin-tools__toggle small { min-width: 0; margin-left: auto; overflow: hidden; color: #aeb8af; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.admin-tools__body { display: grid; gap: 7px; padding: 8px; border-top: 1px solid #575c5d; }
+.admin-topic-filter { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 10px; color: #c2c8c5; font-size: 11px; }
+.admin-topic-filter select { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid #575c5d; color: #fff; background: #292c2f; }
+.admin-filter-actions { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) 32px; align-items: center; gap: 5px; }
+.admin-filter-actions--compact { display: flex; justify-content: flex-end; }
+.admin-filter-actions .icon-button { width: 32px; min-width: 32px; min-height: 29px; border-color: #575c5d; background: #2a2d30; }
+.topic-switch { min-width: 0; display: flex; align-items: center; gap: 5px; color: #c2c8c5; font-size: 10px; white-space: nowrap; cursor: pointer; }
+.topic-switch:has(input:disabled) { opacity: .45; cursor: not-allowed; }
 .topic-switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.topic-switch span { position: relative; width: 30px; height: 17px; flex: none; border: 1px solid #858c87; background: #353b3b; }
-.topic-switch span::after { position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; content: ""; background: #c2c8c5; transition: transform .15s; }
+.topic-switch span { position: relative; width: 26px; height: 16px; flex: none; border: 1px solid #858c87; background: #353b3b; }
+.topic-switch span::after { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; content: ""; background: #c2c8c5; transition: transform .15s; }
 .topic-switch input:checked + span { border-color: var(--signal); background: #495509; }
-.topic-switch input:checked + span::after { background: var(--signal); transform: translateX(13px); }
+.topic-switch input:checked + span::after { background: var(--signal); transform: translateX(11px); }
 .topic-switch input:focus-visible + span { outline: 2px solid var(--signal); outline-offset: 2px; }
 .admin-transfer-progress { display: grid; gap: 7px; margin: -2px 0 10px; padding: 9px 10px; color: #d9dddc; border: 1px solid #555a5b; background: #292c2f; }
 .admin-transfer-progress > div { min-width: 0; display: flex; align-items: center; gap: 7px; font-size: 10px; }

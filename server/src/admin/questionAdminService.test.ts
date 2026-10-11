@@ -64,6 +64,12 @@ describe("QuestionAdminService", () => {
     service.permanentlyDeleteQuestion(deleted.trashId);
   });
 
+  it("keeps plus signs distinct when deriving an ID for a themed title", () => {
+    const service = createService();
+    const id = service.createQuestion({ ...validInput(["答案"], "new.png"), title: "阿米娅 1+-脚", enabled: false });
+    expect(id).toBe("阿米娅-1-plus-脚");
+  });
+
   it("moves a question to trash and restores it without deleting its original image", () => {
     const service = createService();
     const deleted = service.deleteQuestion("existing");

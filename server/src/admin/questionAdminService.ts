@@ -516,7 +516,7 @@ export class QuestionAdminService {
   // 题目 ID 由标题派生：创建前做存在性校验，已存在则拒绝创建（不再自动追加序号），
   // 避免同标题题目静默生成 xxx-2、xxx-3 这类难以辨认的记录。
   private deriveQuestionId(title: string): string {
-    const base = title.normalize("NFKC").trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60) || "question";
+    const base = title.normalize("NFKC").trim().replace(/\+/g, " plus ").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60) || "question";
     const normalizedTitle = normalizeQuestionTitle(title);
     const duplicate = this.readCatalogue().find((entry) => {
       try {

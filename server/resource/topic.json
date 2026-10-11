@@ -3,5 +3,10 @@
     "id": "脚",
     "name": "脚",
     "isDefault": true
+  },
+  {
+    "id": "手",
+    "name": "手",
+    "isDefault": false
   }
 ]

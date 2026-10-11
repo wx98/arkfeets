@@ -80,6 +80,7 @@ const searchText = ref("");
 const activeTopicId = ref("");
 const onlyWithoutQuestions = ref(false);
 const onlyAvailableInTopic = ref(false);
+const toolsExpanded = ref(localStorage.getItem("arkfeets:admin-tools-expanded") === "1");
 const sidebarCollapsed = ref(false);
 const selectedImageName = ref("");
 const expandedImageName = ref("");
@@ -138,6 +139,7 @@ const questionsByImage = computed(() => {
 });
 const relatedQuestions = (image: LibraryImage) => questionsByImage.value.get(image.fileName) ?? [];
 const defaultTopic = computed(() => library.value?.topics.find((topic) => topic.isDefault));
+const activeTopic = computed(() => library.value?.topics.find((topic) => topic.id === activeTopicId.value));
 const topicOccupant = (image: LibraryImage) => relatedQuestions(image).find((question) => question.topic.includes(activeTopicId.value));
 const normalizedNeedle = computed(() => normalizeSearch(searchText.value));
 const filteredImages = computed(() => (library.value?.images ?? []).filter((image) => {
@@ -317,15 +319,16 @@ function beginQuestion(image: LibraryImage) {
   selectImage(image);
   selectedQuestionId.value = "";
   isNew.value = true;
+  const topic = activeTopic.value ?? defaultTopic.value;
   form.value = {
     ...emptyQuestion(),
-    title: imageLabel(image.fileName),
+    title: suggestedQuestionTitle(image.fileName, topic),
     answers: image.metadata.answers.length ? [...image.metadata.answers] : [""],
     hint: image.metadata.hint,
     difficulty: [...image.metadata.difficulty],
     tags: metadataTagsToQuestionTags(image.metadata.tags),
     originalImage: image.fileName,
-    topic: defaultTopic.value ? [defaultTopic.value.id] : [],
+    topic: topic ? [topic.id] : [],
   };
   autoFilledTitle.value = form.value.title;
   imageSelectOpen.value = false;
@@ -364,7 +367,7 @@ function chooseQuestionImage(image: LibraryImage) {
     closeCropDialog();
     imageViewer.value = null;
     if (!form.value.title.trim() || form.value.title === autoFilledTitle.value) {
-      form.value.title = imageLabel(image.fileName);
+      form.value.title = suggestedQuestionTitle(image.fileName, library.value?.topics.find((topic) => topic.id === form.value.topic[0]));
       autoFilledTitle.value = form.value.title;
     }
     message.value = "已更换关联原图，请重新框选谜面";
@@ -733,10 +736,22 @@ function metadataTagsToQuestionTags(tags: Array<Record<string, string>>): string
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function normalizeSearch(value: string) { return value.replace(/\s/gu, "").toLocaleLowerCase(); }
 function imageLabel(fileName: string) { return fileName.replace(/\.(png|jpe?g|webp|gif)$/iu, ""); }
+function suggestedQuestionTitle(fileName: string, topic?: Topic) { return `${imageLabel(fileName)}${topic ? `-${topic.name}` : ""}`; }
+function syncAutoTitleToTopic() {
+  if (!isNew.value || !form.value.originalImage) return;
+  if (!form.value.title.trim() || form.value.title === autoFilledTitle.value) {
+    form.value.title = suggestedQuestionTitle(form.value.originalImage, library.value?.topics.find((topic) => topic.id === form.value.topic[0]));
+    autoFilledTitle.value = form.value.title;
+  }
+}
+function toggleTools() {
+  toolsExpanded.value = !toolsExpanded.value;
+  localStorage.setItem("arkfeets:admin-tools-expanded", toolsExpanded.value ? "1" : "0");
+}
 function imageExt(fileName: string) { return (/\.(png|jpe?g|webp|gif)$/iu.exec(fileName)?.[0] ?? "").toLowerCase(); }
 // 与后端 QuestionAdminService.deriveQuestionId 的归一化规则保持一致
 function deriveQuestionId(title: string) {
-  return title.normalize("NFKC").trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60) || "question";
+  return title.normalize("NFKC").trim().replace(/\+/g, " plus ").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60) || "question";
 }
 function normalizeQuestionTitle(title: string) { return title.normalize("NFKC").trim().toLocaleLowerCase(); }
 
@@ -817,28 +832,35 @@ function questionPreviewStyle(question: LibraryQuestion) {
           <span><CheckCircle2 :size="15" />{{ mode === 'trash' ? '可还原' : '有效' }} <b>{{ modeStats.valid }}</b></span>
           <span><AlertTriangle :size="15" />{{ mode === 'trash' ? '损坏' : '异常' }} <b>{{ modeStats.invalid }}</b></span>
         </div>
-        <div class="admin-toolbar">
-          <label class="icon-button" title="上传原图或文件夹"><FolderUp :size="18" /><input v-bind="{ webkitdirectory: '' }" type="file" accept="image/*" multiple :disabled="busy" @change="uploadImages" /></label>
-          <label class="icon-button" title="导入题库"><Upload :size="18" /><input type="file" accept=".zip,application/zip" :disabled="busy" @change="importArchive" /></label>
-          <button class="icon-button" title="导出题库" :disabled="busy" @click="exportArchive"><Download :size="18" /></button>
-        </div>
-        <button class="admin-topics-link" @click="router.push('/admin/topics')"><Layers3 :size="16" />管理主题</button>
         <div v-if="transferLabel" class="admin-transfer-progress" role="status" aria-live="polite">
           <div><LoaderCircle :size="14" class="is-spinning" /><span>{{ transferLabel }}</span><b v-if="transferProgress !== null">{{ Math.round(transferProgress) }}%</b></div>
           <progress v-if="transferProgress !== null" :value="transferProgress" max="100" />
           <span v-else class="admin-transfer-progress__indeterminate"><i /></span>
         </div>
         <div class="admin-search"><Search :size="16" /><input v-model="searchText" :placeholder="mode === 'images' ? '搜索文件、默认信息或关联题目' : mode === 'trash' ? '搜索回收站题目、答案或原图' : '搜索标题、答案、标签或原图'" /></div>
-        <div v-if="mode !== 'trash'" class="admin-topic-filter">
-          <label for="admin-topic-select">主题</label>
-          <select id="admin-topic-select" v-model="activeTopicId">
-            <option v-if="mode === 'questions'" value="">全部主题</option>
-            <option v-for="topic in library.topics" :key="topic.id" :value="topic.id">{{ topic.name }}{{ topic.isDefault ? ' · 默认' : '' }}</option>
-          </select>
-        </div>
-        <div v-if="mode === 'images'" class="admin-image-filters">
-          <label class="topic-switch"><input v-model="onlyWithoutQuestions" type="checkbox" /><span />仅看全局无题目</label>
-          <label class="topic-switch"><input v-model="onlyAvailableInTopic" type="checkbox" :disabled="!activeTopicId" /><span />仅看本主题未占用</label>
+        <div class="admin-tools">
+          <button type="button" class="admin-tools__toggle" :aria-expanded="toolsExpanded" aria-controls="admin-tools-body" @click="toggleTools">
+            <ChevronDown :size="15" :class="{ open: toolsExpanded }" /><span>{{ toolsExpanded ? '收起' : '更多' }}</span><small>{{ activeTopic?.name ?? '全部主题' }}</small>
+          </button>
+          <div v-show="toolsExpanded" id="admin-tools-body" class="admin-tools__body">
+            <div v-if="mode !== 'trash'" class="admin-topic-filter">
+              <label for="admin-topic-select">主题</label>
+              <select id="admin-topic-select" v-model="activeTopicId">
+                <option v-if="mode === 'questions'" value="">全部主题</option>
+                <option v-for="topic in library.topics" :key="topic.id" :value="topic.id">{{ topic.name }}{{ topic.isDefault ? ' · 默认' : '' }}</option>
+              </select>
+            </div>
+            <div class="admin-toolbar">
+              <label class="icon-button" title="上传原图或文件夹" aria-label="上传原图或文件夹"><FolderUp :size="18" /><input v-bind="{ webkitdirectory: '' }" type="file" accept="image/*" multiple :disabled="busy" @change="uploadImages" /></label>
+              <label class="icon-button" title="导入题库" aria-label="导入题库"><Upload :size="18" /><input type="file" accept=".zip,application/zip" :disabled="busy" @change="importArchive" /></label>
+              <button class="icon-button" title="导出题库" aria-label="导出题库" :disabled="busy" @click="exportArchive"><Download :size="18" /></button>
+            </div>
+            <div class="admin-filter-actions" :class="{ 'admin-filter-actions--compact': mode !== 'images' }">
+              <label v-if="mode === 'images'" class="topic-switch" title="仅看全局无题目"><input v-model="onlyWithoutQuestions" type="checkbox" aria-label="仅看全局无题目" /><span />全局无题</label>
+              <label v-if="mode === 'images'" class="topic-switch" title="仅看本主题未占用"><input v-model="onlyAvailableInTopic" type="checkbox" aria-label="仅看本主题未占用" :disabled="!activeTopicId" /><span />本主题空位</label>
+              <button class="icon-button" title="管理主题" aria-label="管理主题" @click="router.push('/admin/topics')"><Layers3 :size="17" /></button>
+            </div>
+          </div>
         </div>
 
         <nav v-if="mode === 'images'" class="asset-list" aria-label="原图列表">
@@ -974,7 +996,7 @@ function questionPreviewStyle(question: LibraryQuestion) {
               </div>
             </div>
             <label class="wide">标签<input v-model="tagText" placeholder="使用逗号分隔" /></label>
-            <fieldset class="wide topic-checks"><legend>所属主题</legend><label v-for="topic in library.topics" :key="topic.id"><input v-model="form.topic" type="checkbox" :value="topic.id" />{{ topic.name }}<small v-if="topic.isDefault">默认</small></label></fieldset>
+            <fieldset class="wide topic-checks"><legend>所属主题</legend><label v-for="topic in library.topics" :key="topic.id"><input v-model="form.topic" type="checkbox" :value="topic.id" @change="syncAutoTitleToTopic" />{{ topic.name }}<small v-if="topic.isDefault">默认</small></label></fieldset>
             <p v-if="topicConflict" class="field-error wide">{{ topicConflict }}</p>
             <fieldset class="wide difficulty-checks"><legend>适用难度</legend><label v-for="item in difficultyOptions" :key="item.value"><input v-model="form.difficulty" type="checkbox" :value="item.value" />{{ item.label }}</label></fieldset>
           </div>

@@ -1,0 +1,26 @@
+{
+  "id": "阿米娅-近卫-2-脚",
+  "title": "阿米娅(近卫) 2-脚",
+  "answers": [
+    "阿米娅(近卫)",
+    "阿米娅(近卫)精二"
+  ],
+  "hint": "升变后执起青色怒火之剑的罗德岛领袖，感染者少女",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [],
+  "originalImage": "阿米娅(近卫) 2.png",
+  "question": {
+    "x": 1179,
+    "y": 1402,
+    "width": 222,
+    "height": 233,
+    "sourceWidth": 2048,
+    "sourceHeight": 2048
+  },
+  "enabled": true
+}

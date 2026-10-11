@@ -57,14 +57,31 @@ function getResult(): CropResult {
   return { coordinates: { ...coordinates.value }, image: { width: sourceWidth.value, height: sourceHeight.value } };
 }
 
-async function zoom(factor: number) {
+async function zoom(factor: number, clientX?: number, clientY?: number) {
+  const element = viewport.value;
+  if (!element || !sourceWidth.value) return;
   const next = clamp(zoomLevel.value * factor, 1, 6);
   if (next === zoomLevel.value) return;
+  const bounds = element.getBoundingClientRect();
+  const screenX = clientX === undefined ? viewportWidth.value / 2 : clamp(clientX - bounds.left, 0, viewportWidth.value);
+  const screenY = clientY === undefined ? viewportHeight.value / 2 : clamp(clientY - bounds.top, 0, viewportHeight.value);
+  const sourceX = clientX === undefined
+    ? coordinates.value.left + coordinates.value.width / 2
+    : (element.scrollLeft + screenX - imageLeft.value) / displayScale.value;
+  const sourceY = clientY === undefined
+    ? coordinates.value.top + coordinates.value.height / 2
+    : (element.scrollTop + screenY - imageTop.value) / displayScale.value;
   zoomLevel.value = next;
   await nextTick();
-  const centerX = imageLeft.value + (coordinates.value.left + coordinates.value.width / 2) * displayScale.value;
-  const centerY = imageTop.value + (coordinates.value.top + coordinates.value.height / 2) * displayScale.value;
-  viewport.value?.scrollTo({ left: centerX - viewportWidth.value / 2, top: centerY - viewportHeight.value / 2 });
+  element.scrollTo({
+    left: imageLeft.value + sourceX * displayScale.value - screenX,
+    top: imageTop.value + sourceY * displayScale.value - screenY,
+  });
+}
+
+function onWheel(event: WheelEvent) {
+  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportHeight.value : 1);
+  void zoom(Math.exp(clamp(-delta * .0015, -.25, .25)), event.clientX, event.clientY);
 }
 
 function onImageLoad(event: Event) {
@@ -134,7 +151,7 @@ defineExpose({ getResult, setCoordinates, zoom });
 </script>
 
 <template>
-  <div ref="viewport" class="image-crop-editor">
+  <div ref="viewport" class="image-crop-editor" @wheel.prevent="onWheel">
     <div class="image-crop-editor__stage" :style="{ width: `${stageWidth}px`, height: `${stageHeight}px` }">
       <img :src="src" :style="imageStyle" draggable="false" alt="" @load="onImageLoad" />
       <div v-if="sourceWidth && sourceHeight" class="image-crop-editor__frame" :style="frameStyle"

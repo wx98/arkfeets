@@ -5,10 +5,9 @@ import {
   PanelLeftClose, PanelLeftOpen, Plus, RotateCcw, Save, Scissors, Search, Trash2, Upload, X, ZoomIn, ZoomOut,
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { Cropper } from "vue-advanced-cropper";
-import "vue-advanced-cropper/dist/style.css";
 import { useRouter } from "vue-router";
 import CropImageCanvas from "../components/CropImageCanvas.vue";
+import ImageCropEditor from "../components/ImageCropEditor.vue";
 import type { CropRect, Difficulty } from "../types";
 
 interface ImageMetadata {
@@ -93,13 +92,12 @@ const metadataForm = ref<ImageMetadata>(emptyMetadata());
 const metadataTagRows = ref<MetadataTagRow[]>([]);
 const workbench = ref<HTMLElement>();
 const adminEditor = ref<HTMLElement>();
-const cropper = ref<InstanceType<typeof Cropper>>();
+const cropper = ref<InstanceType<typeof ImageCropEditor>>();
 const viewerCanvas = ref<InstanceType<typeof CropImageCanvas>>();
 const cropAspect = ref<number | undefined>();
 const cropConfirmed = ref(false);
 const cropDialogOpen = ref(false);
 const cropReady = ref(false);
-const cropZoom = ref(1);
 const draftCrop = ref<CropRect | null>(null);
 const imageViewer = ref<"original" | "crop" | null>(null);
 const hoveredImage = ref<LibraryImage>();
@@ -395,8 +393,7 @@ function handleCropReady() {
 
 function zoomCrop(factor: number) {
   if (!cropReady.value) return;
-  // Scale the image and stencil together so zooming never changes the selected source pixels.
-  cropZoom.value = Math.min(4, Math.max(1, cropZoom.value * factor));
+  cropper.value?.zoom(factor);
 }
 
 function openCropDialog() {
@@ -404,7 +401,6 @@ function openCropDialog() {
   previousBodyOverflow = document.body.style.overflow;
   document.body.style.overflow = "hidden";
   cropReady.value = false;
-  cropZoom.value = 1;
   draftCrop.value = form.value.question ? clone(form.value.question) : null;
   cropDialogOpen.value = true;
   message.value = "";
@@ -1104,16 +1100,13 @@ function questionPreviewStyle(question: LibraryQuestion) {
             <div><small>QUESTION CROP</small><strong>裁剪谜面</strong></div>
             <div class="admin-viewer-controls">
               <button class="icon-button" title="缩小原图" aria-label="缩小原图" :disabled="!cropReady" @click="zoomCrop(1 / 1.25)"><ZoomOut :size="18" /></button>
+              <button class="icon-button" title="适应画面" aria-label="适应画面" :disabled="!cropReady" @click="cropper?.resetView()"><Maximize2 :size="18" /></button>
               <button class="icon-button" title="放大原图" aria-label="放大原图" :disabled="!cropReady" @click="zoomCrop(1.25)"><ZoomIn :size="18" /></button>
               <button class="icon-button" title="取消裁剪" aria-label="取消裁剪" @click="closeCropDialog"><X :size="20" /></button>
             </div>
           </header>
-          <div class="question-cropper-viewport" @wheel.capture.prevent.stop="zoomCrop($event.deltaY < 0 ? 1.1 : 1 / 1.1)">
-            <Cropper ref="cropper" class="question-cropper" :style="{ transform: `scale(${cropZoom})` }"
-              :src="currentImageUrl" :stencil-props="{ aspectRatio: cropAspect }"
-              image-restriction="stencil" :move-image="false" :resize-image="{ wheel: false, touch: false }"
-              @ready="handleCropReady" @change="handleCropChange" />
-          </div>
+          <ImageCropEditor ref="cropper" class="question-cropper" :src="currentImageUrl" :aspect-ratio="cropAspect"
+            @ready="handleCropReady" @change="handleCropChange" />
           <p v-if="error" class="admin-crop-dialog__error" role="alert">{{ error }}</p>
           <footer class="admin-crop-dialog__footer">
             <div class="crop-ratios" role="group" aria-label="裁切比例">

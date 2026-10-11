@@ -442,16 +442,9 @@ body .question-hover-preview,
 .admin-modal-header .icon-button:hover { color: var(--ink); background: var(--signal); }
 .admin-image-viewer__canvas { flex: 1; min-height: 0; }
 .admin-crop-dialog { width: 100vw; height: 100dvh; max-height: none; padding-bottom: 0; border: 0; }
-.admin-crop-dialog .question-cropper { flex: 1; min-height: 0; }
-.image-crop-editor { overflow: auto; background: repeating-conic-gradient(#aeb4b0 0 25%, #d2d7d2 0 50%) 0 0 / 20px 20px; }
-.image-crop-editor__stage { position: relative; min-width: 100%; min-height: 100%; }
-.image-crop-editor__stage > img { position: absolute; display: block; max-width: none; pointer-events: none; user-select: none; }
-.image-crop-editor__frame { position: absolute; z-index: 1; box-sizing: border-box; border: 2px solid var(--signal); box-shadow: 0 0 0 9999px rgba(10,14,13,.38); cursor: move; touch-action: none; }
-.image-crop-editor__handle { position: absolute; width: 14px; height: 14px; border: 2px solid #1d2420; background: var(--signal); touch-action: none; }
-.image-crop-editor__handle--nw { left: -8px; top: -8px; cursor: nwse-resize; }
-.image-crop-editor__handle--ne { right: -8px; top: -8px; cursor: nesw-resize; }
-.image-crop-editor__handle--sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
-.image-crop-editor__handle--se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+.question-cropper-viewport { flex: 1; min-height: 0; overflow: hidden; }
+.admin-crop-dialog .question-cropper { width: 100%; height: 100%; transform-origin: center; }
+.question-cropper, .question-cropper .vue-advanced-cropper__background { background-color: #f2f4f3; background-image: conic-gradient(#d5d9d7 25%, #f2f4f3 0 50%, #d5d9d7 0 75%, #f2f4f3 0); background-size: 18px 18px; }
 .admin-crop-dialog__error { margin: 0; padding: 9px 16px; color: #a63828; background: #fff0ec; font-size: 12px; }
 .admin-crop-dialog__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: #eef0ed; }
 .admin-crop-dialog__actions { display: flex; gap: 8px; }

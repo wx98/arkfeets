@@ -71,9 +71,9 @@ async function start() {
 
       <fieldset class="option-group solo-game-options">
         <legend><span>03</span> 提示与揭晓</legend>
-        <label>剩余时间 {{ preferences.hintRemainingPercent }}% 时提示<input v-model.number="preferences.hintRemainingPercent" type="range" min="0" max="100" step="5" /></label>
-        <label class="setup-check"><input v-model="preferences.autoNext" type="checkbox" />自动进入下一题</label>
-        <label>答案展示 {{ preferences.revealSeconds }} 秒<input v-model.number="preferences.revealSeconds" type="range" min="1" max="60" step="1" /></label>
+        <label>剩余时间 {{ preferences.hintRemainingPercent }}% 时提示<input v-model.number="preferences.hintRemainingPercent" class="tech-range" :style="{ '--fill': `${preferences.hintRemainingPercent}%` }" type="range" min="0" max="100" step="5" /></label>
+        <label class="publish-toggle game-auto-toggle"><input v-model="preferences.autoNext" type="checkbox" /><span class="publish-switch" /><span class="publish-copy"><strong>自动进入下一题</strong><small>{{ preferences.autoNext ? '自动推进' : '手动推进' }}</small></span></label>
+        <label class="reveal-duration" :class="{ 'reveal-duration--disabled': !preferences.autoNext }">答案展示 {{ preferences.revealSeconds }} 秒<input v-model.number="preferences.revealSeconds" class="tech-range" :style="{ '--fill': `${(preferences.revealSeconds - 1) / 59 * 100}%` }" type="range" min="1" max="60" step="1" :disabled="!preferences.autoNext" /></label>
       </fieldset>
 
       <div class="setup-action">

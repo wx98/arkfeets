@@ -34,7 +34,10 @@ onMounted(async () => {
     preferences.value = setup.preferences;
   } catch (caught) { error.value = caught instanceof Error ? caught.message : "设置加载失败"; }
 });
-watch(difficulty, value => { if (!customDuration.value) durationSeconds.value = difficultyOptions.find(item => item.value === value)!.seconds; });
+watch(difficulty, value => {
+  customDuration.value = false;
+  durationSeconds.value = difficultyOptions.find(item => item.value === value)!.seconds;
+});
 
 async function enter(mode: "create" | "join") {
   error.value = "";
@@ -96,13 +99,15 @@ async function enter(mode: "create" | "join") {
           <fieldset class="option-group compact-options">
             <legend>难度</legend>
             <div class="segmented-control difficulty-segments">
-              <label v-for="item in difficultyOptions" :key="item.value" :class="{ active: difficulty === item.value }">
+              <label v-for="item in difficultyOptions" :key="item.value" :class="{ active: !customDuration && difficulty === item.value }">
                 <input v-model="difficulty" type="radio" :value="item.value" />{{ item.label }}<small>{{ item.seconds }}s</small>
               </label>
+              <div class="custom-duration-option" :class="{ active: customDuration }" role="group" aria-label="自定义单题时间">
+                <button type="button" :aria-pressed="customDuration" @click="customDuration = true">自定义</button>
+                <span class="custom-duration-input"><input v-model.number="durationSeconds" type="number" min="5" max="600" step="1" aria-label="自定义单题秒数" @focus="customDuration = true" @input="customDuration = true" /><span>秒</span></span>
+              </div>
             </div>
           </fieldset>
-          <label class="setup-check"><input v-model="customDuration" type="checkbox" />自定义单题时间</label>
-          <label v-if="customDuration" class="setup-field">单题秒数 <input v-model.number="durationSeconds" type="number" min="5" max="600" step="1" /></label>
           <fieldset class="option-group compact-options">
             <legend>题目数量</legend>
             <div class="segmented-control">
@@ -113,11 +118,11 @@ async function enter(mode: "create" | "join") {
           <fieldset class="option-group compact-options game-options">
             <legend>回合提示与揭晓</legend>
             <label>剩余时间 {{ preferences.hintRemainingPercent }}% 时提示
-              <input v-model.number="preferences.hintRemainingPercent" type="range" min="0" max="100" step="5" />
+              <input v-model.number="preferences.hintRemainingPercent" class="tech-range" :style="{ '--fill': `${preferences.hintRemainingPercent}%` }" type="range" min="0" max="100" step="5" />
             </label>
-            <label class="setup-check"><input v-model="preferences.autoNext" type="checkbox" />自动进入下一题</label>
-            <label>答案展示 {{ preferences.revealSeconds }} 秒
-              <input v-model.number="preferences.revealSeconds" type="range" min="1" max="60" step="1" />
+            <label class="publish-toggle game-auto-toggle"><input v-model="preferences.autoNext" type="checkbox" /><span class="publish-switch" /><span class="publish-copy"><strong>自动进入下一题</strong><small>{{ preferences.autoNext ? '自动推进' : '手动推进' }}</small></span></label>
+            <label class="reveal-duration" :class="{ 'reveal-duration--disabled': !preferences.autoNext }">答案展示 {{ preferences.revealSeconds }} 秒
+              <input v-model.number="preferences.revealSeconds" class="tech-range" :style="{ '--fill': `${(preferences.revealSeconds - 1) / 59 * 100}%` }" type="range" min="1" max="60" step="1" :disabled="!preferences.autoNext" />
             </label>
           </fieldset>
           <fieldset class="option-group compact-options">

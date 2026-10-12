@@ -48,21 +48,67 @@ describe("MultiplayerRoomManager", () => {
     manager.dispose();
   });
 
-  it("advances unanswered questions on the authoritative timer", () => {
+  it("keeps unanswered reveals until the host advances by default", () => {
     vi.useFakeTimers();
-    const manager = createManager(2, { durationSeconds: { medium: 1 } });
+    const manager = createManager(2, { durationSeconds: { medium: 5 } });
     manager.createRoom({ roomCode: "timer", ...host, difficulty: "medium", requestedCount: 20 });
     manager.start("timer", host.sessionId);
 
-    vi.advanceTimersByTime(1_050);
+    vi.advanceTimersByTime(5_050);
     expect(manager.getView("timer", host.sessionId).state).toBe("REVEAL");
     expect(manager.getView("timer", host.sessionId).reveal?.timedOut).toBe(true);
-    vi.advanceTimersByTime(1_250);
-    expect(manager.getView("timer", host.sessionId).question?.index).toBe(2);
-    vi.advanceTimersByTime(1_050);
+    vi.advanceTimersByTime(10_000);
     expect(manager.getView("timer", host.sessionId).state).toBe("REVEAL");
-    vi.advanceTimersByTime(1_250);
+    manager.next("timer", host.sessionId);
+    expect(manager.getView("timer", host.sessionId).question?.index).toBe(2);
+    vi.advanceTimersByTime(5_050);
+    expect(manager.getView("timer", host.sessionId).state).toBe("REVEAL");
+    manager.next("timer", host.sessionId);
     expect(manager.getView("timer", host.sessionId).state).toBe("RANKING");
+    manager.dispose();
+  });
+
+  it("automatically advances after the configured reveal duration", () => {
+    vi.useFakeTimers();
+    const manager = createManager(2, { durationSeconds: { medium: 5 } });
+    manager.createRoom({ roomCode: "auto", ...host, difficulty: "medium", requestedCount: 20,
+      preferences: { hintRemainingPercent: 20, revealSeconds: 10, autoNext: true } });
+    manager.start("auto", host.sessionId);
+    manager.answer("auto", host.sessionId, "答案1");
+    expect(manager.getView("auto", host.sessionId).revealEndsAt).toBeDefined();
+    vi.advanceTimersByTime(9_999);
+    expect(manager.getView("auto", host.sessionId).state).toBe("REVEAL");
+    vi.advanceTimersByTime(1);
+    expect(manager.getView("auto", host.sessionId).question?.index).toBe(2);
+    manager.dispose();
+  });
+
+  it("uses the same reveal duration when nobody answers", () => {
+    vi.useFakeTimers();
+    const manager = createManager(2, { durationSeconds: { medium: 5 } });
+    manager.createRoom({ roomCode: "auto-timeout", ...host, difficulty: "medium", requestedCount: 20,
+      preferences: { hintRemainingPercent: 20, revealSeconds: 10, autoNext: true } });
+    manager.start("auto-timeout", host.sessionId);
+    vi.advanceTimersByTime(5_020);
+    expect(manager.getView("auto-timeout", host.sessionId).reveal?.timedOut).toBe(true);
+    vi.advanceTimersByTime(9_999);
+    expect(manager.getView("auto-timeout", host.sessionId).state).toBe("REVEAL");
+    vi.advanceTimersByTime(1);
+    expect(manager.getView("auto-timeout", host.sessionId).question?.index).toBe(2);
+    manager.dispose();
+  });
+
+  it("filters a topic and renews the deck in endless mode", () => {
+    const manager = createManager(2);
+    manager.createRoom({ roomCode: "endless", ...host, difficulty: "medium", requestedCount: 0, topicId: "脚" });
+    manager.start("endless", host.sessionId);
+    for (let index = 0; index < 3; index += 1) {
+      const view = manager.getView("endless", host.sessionId);
+      manager.answer("endless", host.sessionId, `答案${Number(view.question?.id)}`);
+      manager.next("endless", host.sessionId);
+    }
+    expect(manager.getView("endless", host.sessionId)).toMatchObject({ state: "ANSWERING", requestedCount: 0 });
+    expect(manager.getView("endless", host.sessionId).question?.index).toBe(4);
     manager.dispose();
   });
 
@@ -166,5 +212,8 @@ function createManager(count: number, options: ConstructorParameters<typeof Mult
     question: { x: 0, y: 0, width: 100, height: 100, sourceWidth: 100, sourceHeight: 100 },
     enabled: true,
   }));
-  return new MultiplayerRoomManager({ drawQuestions: (_difficulty, requested) => questions.slice(0, requested) }, options);
+  return new MultiplayerRoomManager({
+    drawQuestions: (_difficulty, requested) => questions.slice(0, requested),
+    getTopics: () => [{ id: "脚", name: "脚", isDefault: true }],
+  }, options);
 }

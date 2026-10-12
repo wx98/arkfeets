@@ -51,6 +51,10 @@ const secondsLeft = computed(() => room.value?.state === "ANSWERING" && room.val
   ? Math.max(0, Math.ceil((room.value.question.endsAt - now.value) / 1000)) : 0);
 const timerProgress = computed(() => room.value?.question
   ? Math.max(0, Math.min(100, secondsLeft.value / room.value.question.durationSeconds * 100)) : 0);
+const showHint = computed(() => room.value?.state === "ANSWERING" && !!room.value.question
+  && timerProgress.value <= room.value.question.hintRemainingPercent);
+const revealSecondsLeft = computed(() => room.value?.revealEndsAt
+  ? Math.max(0, Math.ceil((room.value.revealEndsAt - now.value) / 1000)) : 0);
 const self = computed(() => room.value?.players.find((player) => player.sessionId === sessionId));
 const canAnswer = computed(() => room.value?.answerSource === "WEB" && room.value?.state === "ANSWERING" && (!room.value.question?.overtime || self.value?.isContender));
 const winners = computed(() => room.value?.players.filter((player) => room.value?.winnerSessionIds?.includes(player.sessionId)) ?? []);
@@ -173,7 +177,10 @@ async function leave() {
 <template>
   <main class="play-page multi-room-page">
     <header class="topbar play-topbar">
-      <button class="icon-button" title="退出房间" @click="leave"><ArrowLeft :size="20" /></button>
+      <div class="room-topbar-left">
+        <button class="icon-button" title="退出房间" @click="leave"><ArrowLeft :size="20" /></button>
+        <span v-if="room" class="room-mode-label">{{ room.answerSource === 'BILIBILI' ? '直播弹幕' : room.answerSource === 'EXTERNAL_API' ? '接口抢答' : '网页抢答' }} · {{ room.topicName }} · {{ room.requestedCount === 0 ? '无尽' : `${room.requestedCount} 题` }}</span>
+      </div>
       <div class="room-code"><small>ROOM CODE</small><strong>{{ roomCode.toUpperCase() }}</strong></div>
       <div v-if="room" class="play-stats">
         <span><Users :size="17" />{{ room.players.length }}{{ room.answerSource === 'BILIBILI' ? '' : '/20' }}</span>
@@ -196,7 +203,7 @@ async function leave() {
           <h1>{{ room.roomCode }}</h1>
           <p v-if="room.answerSource === 'BILIBILI'">等待主播开始。直播观众发送文字弹幕后会自动加入计分板。</p>
           <p v-else>等待队员加入。游戏开始后房间将锁定，最多 20 人。</p>
-          <dl><div><dt>难度</dt><dd>{{ room.difficulty }}</dd></div><div><dt>题目</dt><dd>{{ room.requestedCount }}</dd></div><div><dt>答案来源</dt><dd>{{ room.answerSource === 'BILIBILI' ? 'BILIBILI LIVE' : room.answerSource === 'EXTERNAL_API' ? 'HTTP API' : 'WEB' }}</dd></div></dl>
+          <dl><div><dt>主题</dt><dd>{{ room.topicName }}</dd></div><div><dt>难度 / 时限</dt><dd>{{ room.difficulty }} / {{ room.durationSeconds }}s</dd></div><div><dt>题目</dt><dd>{{ room.requestedCount === 0 ? '无尽' : room.requestedCount }}</dd></div><div><dt>答案来源</dt><dd>{{ room.answerSource === 'BILIBILI' ? 'BILIBILI LIVE' : room.answerSource === 'EXTERNAL_API' ? 'HTTP API' : 'WEB' }}</dd></div></dl>
           <button v-if="room.isHost" class="button button--primary lobby-start" :disabled="starting" @click="startGame"><Radio :size="19" />{{ starting && room.answerSource === 'BILIBILI' ? '正在连接直播间...' : '开始抢答' }}</button>
           <p v-else class="waiting-copy">等待房主开始...</p>
           <p v-if="room.answerSource === 'BILIBILI'" class="waiting-copy">直播间来源由服务端配置，开始后接收文字弹幕。</p>
@@ -235,11 +242,12 @@ async function leave() {
         </div>
         <aside class="answer-panel multiplayer-panel">
           <div class="mini-scoreboard">
-            <div class="roster-title"><span>SCOREBOARD</span><strong>{{ room.question?.index }} / {{ room.question?.total }}</strong></div>
+            <div class="roster-title"><span>SCOREBOARD</span><strong>{{ room.question?.index }}{{ room.requestedCount === 0 ? ' / ∞' : ` / ${room.question?.total}` }}</strong></div>
             <ol><li v-for="(player, index) in room.players" :key="player.sessionId" :class="{ muted: room.question?.overtime && !player.isContender }"><span>{{ index + 1 }}</span><strong>{{ player.nickname }}</strong><b>{{ player.score }}</b></li></ol>
           </div>
 
           <template v-if="room.state === 'ANSWERING'">
+            <div v-if="showHint" class="hint-line"><span>{{ room.question?.hint || '本题暂无提示' }}</span></div>
             <template v-if="room.answerSource === 'BILIBILI'">
               <div><p class="eyebrow">BILIBILI LIVE / 直播弹幕</p><h2>{{ room.bilibiliConnected ? '弹幕抢答中' : '弹幕连接中断' }}</h2></div>
               <div class="external-api-console"><Radio :size="22" /><span>{{ room.bilibiliConnected ? 'LIVE' : 'RECONNECTING' }}</span><strong>文字弹幕作为答案</strong></div>
@@ -258,9 +266,10 @@ async function leave() {
           </template>
 
           <template v-else>
-            <div><p class="eyebrow">{{ room.reveal?.timedOut ? 'TIME OUT / 时间到' : 'IDENTIFIED / 抢答成功' }}</p><h2>{{ room.reveal?.answers[0] }}</h2><p class="answer-aliases">{{ room.reveal?.timedOut ? '即将自动进入下一题' : `${room.reveal?.winnerNickname} 首先回答正确` }}</p></div>
-            <button v-if="room.isHost && !room.reveal?.timedOut" class="button button--primary" @click="act(() => multiplayerSocket.next(roomCode))"><ArrowRight :size="19" />继续下一题</button>
-            <p v-else-if="!room.reveal?.timedOut" class="waiting-copy">等待房主进入下一题...</p>
+            <div><p class="eyebrow">{{ room.reveal?.timedOut ? 'TIME OUT / 时间到' : 'IDENTIFIED / 抢答成功' }}</p><h2>{{ room.reveal?.answers[0] }}</h2><p v-if="!room.reveal?.timedOut" class="answer-aliases">{{ room.reveal?.winnerNickname }} 首先回答正确</p></div>
+            <p v-if="room.revealEndsAt" class="reveal-countdown">{{ revealSecondsLeft }} 秒后自动继续</p>
+            <button v-if="room.isHost" class="button button--primary" @click="act(() => multiplayerSocket.next(roomCode))"><ArrowRight :size="19" />继续下一题</button>
+            <p v-else-if="!room.revealEndsAt" class="waiting-copy">等待房主进入下一题...</p>
           </template>
           <p v-if="error" class="error-text">{{ error }}</p>
         </aside>

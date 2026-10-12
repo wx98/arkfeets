@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ArrowLeft, Cable, LogIn, Radio, Tv, Users } from "lucide-vue-next";
-import { ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { getClientSessionId, multiplayerSocket } from "../multiplayer/socket";
 import type { AnswerSource, Difficulty } from "../types";
+import { loadGameSetup, saveGamePreferences, type GamePreferences, type GameTopic } from "../api/gameSetup";
 
 const router = useRouter();
 const nickname = ref(localStorage.getItem("arkfeets:nickname") ?? "博士");
@@ -11,8 +12,29 @@ const roomCode = ref("");
 const difficulty = ref<Difficulty>("medium");
 const requestedCount = ref(20);
 const answerSource = ref<AnswerSource>("WEB");
+const topics = ref<GameTopic[]>([]);
+const topicId = ref("");
+const customDuration = ref(false);
+const durationSeconds = ref(60);
+const preferences = ref<GamePreferences>({ hintRemainingPercent: 20, revealSeconds: 10, autoNext: false });
+const difficultyOptions: Array<{ value: Difficulty; label: string; seconds: number }> = [
+  { value: "simple", label: "简单", seconds: 90 },
+  { value: "medium", label: "中等", seconds: 60 },
+  { value: "hard", label: "困难", seconds: 30 },
+  { value: "hell", label: "地狱", seconds: 10 },
+];
+const selectedDuration = computed(() => customDuration.value ? durationSeconds.value : difficultyOptions.find(item => item.value === difficulty.value)!.seconds);
 const busy = ref(false);
 const error = ref("");
+onMounted(async () => {
+  try {
+    const setup = await loadGameSetup();
+    topics.value = setup.topics;
+    topicId.value = setup.topics.find(item => item.isDefault)?.id ?? setup.topics[0]?.id ?? "";
+    preferences.value = setup.preferences;
+  } catch (caught) { error.value = caught instanceof Error ? caught.message : "设置加载失败"; }
+});
+watch(difficulty, value => { if (!customDuration.value) durationSeconds.value = difficultyOptions.find(item => item.value === value)!.seconds; });
 
 async function enter(mode: "create" | "join") {
   error.value = "";
@@ -27,7 +49,12 @@ async function enter(mode: "create" | "join") {
   try {
     const identity = { sessionId: getClientSessionId(), nickname: name, roomCode: code };
     const room = mode === "create"
-      ? await multiplayerSocket.create({ ...identity, difficulty: difficulty.value, requestedCount: requestedCount.value, answerSource: answerSource.value })
+      ? await (async () => {
+        if (!topicId.value) throw new Error("请选择主题");
+        if (!Number.isInteger(selectedDuration.value) || selectedDuration.value < 5 || selectedDuration.value > 600) throw new Error("单题时间需为 5-600 秒");
+        await saveGamePreferences(preferences.value);
+        return multiplayerSocket.create({ ...identity, difficulty: difficulty.value, requestedCount: requestedCount.value, topicId: topicId.value, durationSeconds: selectedDuration.value, preferences: preferences.value, answerSource: answerSource.value });
+      })()
       : await multiplayerSocket.join(identity);
     if (room) await router.push(`/multi/${encodeURIComponent(room.roomCode)}`);
   } catch (caught) {
@@ -63,19 +90,35 @@ async function enter(mode: "create" | "join") {
 
         <section class="create-config">
           <div class="create-config__title"><Radio :size="20" /><div><strong>创建新房间</strong><small>CREATE ROOM</small></div></div>
+          <label class="setup-field">主题
+            <select v-model="topicId"><option v-for="topic in topics" :key="topic.id" :value="topic.id">{{ topic.name }}{{ topic.isDefault ? ' · 默认' : '' }}</option></select>
+          </label>
           <fieldset class="option-group compact-options">
             <legend>难度</legend>
             <div class="segmented-control difficulty-segments">
-              <label v-for="item in ([['simple','简单'],['medium','中等'],['hard','困难'],['hell','地狱']] as const)" :key="item[0]" :class="{ active: difficulty === item[0] }">
-                <input v-model="difficulty" type="radio" :value="item[0]" />{{ item[1] }}
+              <label v-for="item in difficultyOptions" :key="item.value" :class="{ active: difficulty === item.value }">
+                <input v-model="difficulty" type="radio" :value="item.value" />{{ item.label }}<small>{{ item.seconds }}s</small>
               </label>
             </div>
           </fieldset>
+          <label class="setup-check"><input v-model="customDuration" type="checkbox" />自定义单题时间</label>
+          <label v-if="customDuration" class="setup-field">单题秒数 <input v-model.number="durationSeconds" type="number" min="5" max="600" step="1" /></label>
           <fieldset class="option-group compact-options">
             <legend>题目数量</legend>
             <div class="segmented-control">
               <label v-for="count in [20, 50, 100]" :key="count" :class="{ active: requestedCount === count }"><input v-model="requestedCount" type="radio" :value="count" />{{ count }}</label>
+              <label :class="{ active: requestedCount === 0 }"><input v-model="requestedCount" type="radio" :value="0" />无尽</label>
             </div>
+          </fieldset>
+          <fieldset class="option-group compact-options game-options">
+            <legend>回合提示与揭晓</legend>
+            <label>剩余时间 {{ preferences.hintRemainingPercent }}% 时提示
+              <input v-model.number="preferences.hintRemainingPercent" type="range" min="0" max="100" step="5" />
+            </label>
+            <label class="setup-check"><input v-model="preferences.autoNext" type="checkbox" />自动进入下一题</label>
+            <label>答案展示 {{ preferences.revealSeconds }} 秒
+              <input v-model.number="preferences.revealSeconds" type="range" min="1" max="60" step="1" />
+            </label>
           </fieldset>
           <fieldset class="option-group compact-options">
             <legend>答案来源</legend>

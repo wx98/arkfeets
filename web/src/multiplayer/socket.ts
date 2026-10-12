@@ -1,5 +1,6 @@
 import { io } from "socket.io-client";
 import type { AnswerSource, Difficulty, LiveDanmakuEvent, MultiplayerRoomView } from "../types";
+import type { GamePreferences } from "../api/gameSetup";
 
 const socket = io({ autoConnect: true });
 
@@ -18,7 +19,7 @@ export function getClientSessionId(): string {
 }
 
 export const multiplayerSocket = {
-  create(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number; answerSource: AnswerSource }) {
+  create(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number; topicId: string; durationSeconds: number; preferences: GamePreferences; answerSource: AnswerSource }) {
     return emit("room:create", input);
   },
   join(input: { roomCode: string; sessionId: string; nickname: string }) {

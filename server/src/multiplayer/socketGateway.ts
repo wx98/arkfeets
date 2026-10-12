@@ -3,6 +3,7 @@ import { z } from "zod";
 import { difficulties } from "../question/types.js";
 import { type AnswerSource, type MultiplayerRoomManager } from "./multiplayerRoomManager.js";
 import type { BilibiliDanmakuBridge } from "./bilibiliDanmakuBridge.js";
+import { gamePreferencesSchema } from "../gamePreferences.js";
 
 const roomCodeSchema = z.string().min(2).max(20);
 const identitySchema = z.object({ sessionId: z.string().min(8).max(100), nickname: z.string().trim().min(1).max(20) });
@@ -10,7 +11,10 @@ const roomSchema = z.object({ roomCode: roomCodeSchema });
 const createSchema = identitySchema.extend({
   roomCode: roomCodeSchema,
   difficulty: z.enum(difficulties),
-  requestedCount: z.union([z.literal(20), z.literal(50), z.literal(100)]),
+  requestedCount: z.union([z.literal(0), z.literal(20), z.literal(50), z.literal(100)]),
+  topicId: z.string().min(1).max(80).optional(),
+  durationSeconds: z.number().int().min(5).max(600).optional(),
+  preferences: gamePreferencesSchema.optional(),
   answerSource: z.enum(["WEB", "EXTERNAL_API", "BILIBILI"] satisfies [AnswerSource, AnswerSource, AnswerSource]),
 });
 const joinSchema = identitySchema.extend({ roomCode: roomCodeSchema });

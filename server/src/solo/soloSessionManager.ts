@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { matchesAnswer } from "../question/answerMatcher.js";
 import type { Difficulty, Question } from "../question/types.js";
 import type { QuestionRepository } from "../question/questionRepository.js";
+import { defaultGamePreferences, type GamePreferences } from "../gamePreferences.js";
 
 type SoloState = "ANSWERING" | "REVEAL" | "FINISHED";
 type SoloEndReason = "COMPLETED" | "LIFE_EMPTY" | "QUESTION_EXHAUSTED";
@@ -27,12 +28,14 @@ interface SoloSession {
   endsAt: number;
   feedback?: string;
   endReason?: SoloEndReason;
+  preferences: GamePreferences;
+  revealEndsAt?: number;
 }
 
 export class SoloSessionManager {
   private readonly sessions = new Map<string, SoloSession>();
 
-  constructor(private readonly questions: QuestionRepository) {}
+  constructor(private readonly questions: QuestionRepository, private readonly readPreferences: () => GamePreferences = () => defaultGamePreferences) {}
 
   create(difficulty: Difficulty, requestedCount: number) {
     const selected = this.questions.drawQuestions(difficulty, requestedCount);
@@ -50,6 +53,7 @@ export class SoloSessionManager {
       state: "ANSWERING",
       startedAt: now,
       endsAt: now + durationByDifficulty[difficulty] * 1000,
+      preferences: this.readPreferences(),
     };
     this.sessions.set(session.id, session);
     return this.toView(session);
@@ -70,6 +74,7 @@ export class SoloSessionManager {
     session.attempted += 1;
     session.lives = isFast ? Math.min(10, session.lives + 1) : session.lives;
     session.state = "REVEAL";
+    this.beginReveal(session);
     session.feedback = isFast ? "命中，快速作答生命 +1" : "命中";
     return this.toView(session);
   }
@@ -80,6 +85,7 @@ export class SoloSessionManager {
     session.attempted += 1;
     session.lives = Math.max(0, session.lives - 1);
     session.state = "REVEAL";
+    this.beginReveal(session);
     session.feedback = "已跳过，生命 -1";
     return this.toView(session);
   }
@@ -91,6 +97,7 @@ export class SoloSessionManager {
     session.attempted += 1;
     session.lives = Math.max(0, session.lives - 1);
     session.state = "REVEAL";
+    this.beginReveal(session);
     session.feedback = "时间到，生命 -1";
     return this.toView(session);
   }
@@ -108,6 +115,7 @@ export class SoloSessionManager {
     session.currentIndex += 1;
     const now = Date.now();
     session.state = "ANSWERING";
+    session.revealEndsAt = undefined;
     session.startedAt = now;
     session.endsAt = now + durationByDifficulty[session.difficulty] * 1000;
     session.feedback = undefined;
@@ -118,6 +126,10 @@ export class SoloSessionManager {
     const session = this.sessions.get(id);
     if (!session) throw new Error("游戏会话不存在或已失效");
     return session;
+  }
+
+  private beginReveal(session: SoloSession): void {
+    session.revealEndsAt = session.preferences.autoNext ? Date.now() + session.preferences.revealSeconds * 1000 : undefined;
   }
 
   private currentQuestion(session: SoloSession): Question {
@@ -156,8 +168,11 @@ export class SoloSessionManager {
         durationSeconds: durationByDifficulty[session.difficulty],
         startedAt: session.startedAt,
         endsAt: session.endsAt,
+        hintRemainingPercent: session.preferences.hintRemainingPercent,
       },
       reveal,
+      revealEndsAt: session.revealEndsAt,
+      preferences: session.preferences,
       stats: {
         score: session.score,
         lives: session.lives,

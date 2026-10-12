@@ -17,7 +17,7 @@ describe("game audit log", () => {
   it("creates one file per game with wrong/correct answers and post-answer rank", () => {
     const directory = mkdtempSync(join(tmpdir(), "arkfeets-audit-"));
     const log = new GameAuditLogger(directory);
-    const manager = new MultiplayerRoomManager({ drawQuestions: () => [question] }, {
+    const manager = new MultiplayerRoomManager({ drawQuestions: () => [question], getTopics: () => [{ id: "脚", name: "脚", isDefault: true }] }, {
       onGameStarted: (code, details) => log.start(code, details),
       onAnswerReceived: (code, details) => log.answer(code, details),
       onGameEnded: (code, details) => log.end(code, details),

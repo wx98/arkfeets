@@ -1,5 +1,6 @@
 export type Difficulty = "simple" | "medium" | "hard" | "hell";
 export type SoloState = "ANSWERING" | "REVEAL" | "FINISHED";
+import type { GamePreferences } from "./api/gameSetup";
 export interface CropRect { x: number; y: number; width: number; height: number; sourceWidth: number; sourceHeight: number }
 
 export interface SoloGameView {
@@ -17,8 +18,11 @@ export interface SoloGameView {
     durationSeconds: number;
     startedAt: number;
     endsAt: number;
+    hintRemainingPercent: number;
   };
   reveal?: { imageUrl: string; answers: string[] };
+  revealEndsAt?: number;
+  preferences: GamePreferences;
   stats: { score: number; lives: number; attempted: number; correctRate: number };
   feedback?: string;
   endReason?: "COMPLETED" | "LIFE_EMPTY" | "QUESTION_EXHAUSTED";
@@ -42,6 +46,10 @@ export interface MultiplayerRoomView {
   isHost: boolean;
   difficulty: Difficulty;
   requestedCount: number;
+  topicId: string;
+  topicName: string;
+  durationSeconds: number;
+  preferences: GamePreferences;
   answerSource: AnswerSource;
   bilibiliConnected?: boolean;
   players: Array<{
@@ -65,8 +73,10 @@ export interface MultiplayerRoomView {
     startedAt: number;
     endsAt: number;
     overtime: boolean;
+    hintRemainingPercent: number;
   };
   reveal?: { imageUrl: string; answers: string[]; winnerNickname?: string; timedOut?: boolean };
+  revealEndsAt?: number;
   rankingEndsAt?: number;
   winnerSessionIds?: string[];
   feedback?: string;

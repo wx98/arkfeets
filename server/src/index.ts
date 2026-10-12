@@ -18,6 +18,7 @@ import { relayLiveDanmaku } from "./multiplayer/liveDanmakuRelay.js";
 import { managerCallbacks, registerMultiplayerGateway } from "./multiplayer/socketGateway.js";
 import { QuestionRepository } from "./question/questionRepository.js";
 import { SoloSessionManager } from "./solo/soloSessionManager.js";
+import { GamePreferencesStore, gamePreferencesSchema } from "./gamePreferences.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -29,12 +30,13 @@ app.use(express.json({ limit: "1mb" }));
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const resourceDirectory = join(currentDir, "../resource");
+const preferencesStore = new GamePreferencesStore(join(currentDir, "../config.json"));
 const config = JSON.parse(readFileSync(join(currentDir, "../config.json"), "utf8")) as {
   adminPassword: string;
   adminSessionHours?: number;
 };
 const questionRepository = new QuestionRepository(resourceDirectory);
-const soloSessionManager = new SoloSessionManager(questionRepository);
+const soloSessionManager = new SoloSessionManager(questionRepository, () => preferencesStore.read());
 const adminSessions = new AdminSessionManager(config.adminPassword, (config.adminSessionHours ?? 8) * 60 * 60 * 1000);
 const questionAdminService = new QuestionAdminService(resourceDirectory, questionRepository);
 const gameAuditLogger = new GameAuditLogger(join(currentDir, "../logs/games"));
@@ -43,6 +45,13 @@ let bilibiliBridge: BilibiliDanmakuBridge;
 
 app.use("/full-data", express.static(join(resourceDirectory, "full_data")));
 app.use("/api/solo", createSoloRoutes(soloSessionManager));
+app.get("/api/game/setup", (_request, response) => {
+  response.json({ topics: questionRepository.getTopics(), preferences: preferencesStore.read() });
+});
+app.put("/api/game/preferences", (request, response) => {
+  try { response.json(preferencesStore.save(gamePreferencesSchema.parse(request.body))); }
+  catch (error) { response.status(400).json({ message: error instanceof Error ? error.message : "保存失败" }); }
+});
 
 app.get("/api/health", (_request, response) => {
   response.json({ ok: true, time: Date.now(), questions: questionRepository.getValidationReport().validCount });

@@ -60,8 +60,14 @@ export class QuestionRepository {
     this.load();
   }
 
-  drawQuestions(difficulty: Difficulty, requestedCount: number): Question[] {
-    const pool = this.questions.filter((question) => question.enabled && question.difficulty.includes(difficulty));
+  getTopics() {
+    const path = join(this.resourceDirectory, "topic.json");
+    return existsSync(path) ? topicsSchema.parse(JSON.parse(readFileSync(path, "utf8"))) : initialTopics;
+  }
+
+  drawQuestions(difficulty: Difficulty, requestedCount: number, topicId?: string): Question[] {
+    const pool = this.questions.filter((question) => question.enabled && question.difficulty.includes(difficulty)
+      && (!topicId || question.topics?.includes(topicId)));
     for (let index = pool.length - 1; index > 0; index -= 1) {
       const swapIndex = Math.floor(Math.random() * (index + 1));
       [pool[index], pool[swapIndex]] = [pool[swapIndex], pool[index]];
@@ -74,8 +80,7 @@ export class QuestionRepository {
     const topicsPath = join(this.resourceDirectory, "topic.json");
     const topics = existsSync(topicsPath) ? topicsSchema.parse(JSON.parse(readFileSync(topicsPath, "utf8"))) : initialTopics;
     const topicIds = new Set(topics.map((topic) => topic.id));
-    const defaultTopic = topics.some((topic) => topic.id === initialTopics[0].id)
-      ? initialTopics[0].id : topics.find((topic) => topic.isDefault)!.id;
+    const defaultTopic = topics.find((topic) => topic.isDefault)!.id;
     const seen = new Set<string>();
     const seenImages = new Map<string, string>();
     for (const entry of catalogue) {
@@ -105,6 +110,7 @@ export class QuestionRepository {
             originalImageUrl: imageUrl(record.originalImage),
             question: record.question as CropRect,
             enabled: record.enabled,
+            topics: assignedTopics,
           });
         }
       } catch (error) {

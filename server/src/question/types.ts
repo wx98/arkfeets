@@ -21,6 +21,7 @@ export interface Question {
   originalImageUrl: string;
   question: CropRect;
   enabled: boolean;
+  topics?: string[];
 }
 
 export interface QuestionValidationItem {

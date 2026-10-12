@@ -2,6 +2,7 @@ import { matchesAnswer } from "../question/answerMatcher.js";
 import type { Difficulty, Question } from "../question/types.js";
 import type { QuestionRepository } from "../question/questionRepository.js";
 import type { AnswerAudit, GameEndAudit, GameStartAudit } from "./gameAuditLogger.js";
+import { defaultGamePreferences, type GamePreferences } from "../gamePreferences.js";
 
 export type MultiplayerRoomState = "LOBBY" | "ANSWERING" | "REVEAL" | "RANKING";
 export type AnswerSource = "WEB" | "EXTERNAL_API" | "BILIBILI";
@@ -12,6 +13,10 @@ export interface MultiplayerRoomView {
   isHost: boolean;
   difficulty: Difficulty;
   requestedCount: number;
+  topicId: string;
+  topicName: string;
+  durationSeconds: number;
+  preferences: GamePreferences;
   answerSource: AnswerSource;
   bilibiliConnected?: boolean;
   players: Array<{
@@ -35,8 +40,10 @@ export interface MultiplayerRoomView {
     startedAt: number;
     endsAt: number;
     overtime: boolean;
+    hintRemainingPercent: number;
   };
   reveal?: { imageUrl: string; answers: string[]; winnerNickname?: string; timedOut?: boolean };
+  revealEndsAt?: number;
   rankingEndsAt?: number;
   winnerSessionIds?: string[];
   feedback?: string;
@@ -56,6 +63,10 @@ interface Room {
   hostSessionId: string;
   difficulty: Difficulty;
   requestedCount: number;
+  topicId: string;
+  topicName: string;
+  durationSeconds: number;
+  preferences: GamePreferences;
   answerSource: AnswerSource;
   bilibiliConnected: boolean;
   state: MultiplayerRoomState;
@@ -70,6 +81,7 @@ interface Room {
   rankingEndsAt?: number;
   roundWinnerSessionId?: string;
   revealTimedOut?: boolean;
+  revealEndsAt?: number;
   winnerSessionIds?: string[];
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -103,7 +115,7 @@ export class MultiplayerRoomManager {
   private readonly onAnswerReceived: NonNullable<ManagerOptions["onAnswerReceived"]>;
   private readonly onGameEnded: NonNullable<ManagerOptions["onGameEnded"]>;
 
-  constructor(private readonly questionRepository: Pick<QuestionRepository, "drawQuestions">, options: ManagerOptions = {}) {
+  constructor(private readonly questionRepository: Pick<QuestionRepository, "drawQuestions" | "getTopics">, options: ManagerOptions = {}) {
     this.durations = { ...defaultDurations, ...options.durationSeconds };
     this.rankingDurationMs = options.rankingDurationMs ?? 30_000;
     this.onRoomUpdated = options.onRoomUpdated ?? (() => undefined);
@@ -113,17 +125,26 @@ export class MultiplayerRoomManager {
     this.onGameEnded = options.onGameEnded ?? (() => undefined);
   }
 
-  createRoom(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number; answerSource?: AnswerSource }) {
+  createRoom(input: { roomCode: string; sessionId: string; nickname: string; difficulty: Difficulty; requestedCount: number; topicId?: string; durationSeconds?: number; preferences?: GamePreferences; answerSource?: AnswerSource }) {
     const code = normalizeRoomCode(input.roomCode);
     if (this.rooms.has(code)) throw new Error("房间号已存在");
     validateSession(input.sessionId, input.nickname);
-    if (![20, 50, 100].includes(input.requestedCount)) throw new Error("题目数量不合法");
+    if (![0, 20, 50, 100].includes(input.requestedCount)) throw new Error("题目数量不合法");
+    const topics = this.questionRepository.getTopics();
+    const topic = topics.find(item => item.id === (input.topicId ?? topics.find(item => item.isDefault)?.id));
+    if (!topic) throw new Error("所选主题不存在");
+    const durationSeconds = input.durationSeconds ?? this.durations[input.difficulty];
+    if (!Number.isInteger(durationSeconds) || durationSeconds < 5 || durationSeconds > 600) throw new Error("单题时间需为 5-600 秒");
 
     const room: Room = {
       code,
       hostSessionId: input.sessionId,
       difficulty: input.difficulty,
       requestedCount: input.requestedCount,
+      topicId: topic.id,
+      topicName: topic.name,
+      durationSeconds,
+      preferences: input.preferences ?? defaultGamePreferences,
       answerSource: input.answerSource ?? "WEB",
       bilibiliConnected: false,
       state: "LOBBY",
@@ -164,14 +185,14 @@ export class MultiplayerRoomManager {
     if (room.answerSource === "EXTERNAL_API" && this.activeExternalRoomCode && this.activeExternalRoomCode !== room.code) {
       throw new Error(`外部答案接口正被房间 ${this.activeExternalRoomCode} 使用`);
     }
-    const questions = this.questionRepository.drawQuestions(room.difficulty, 1_000_000);
+    const questions = this.questionRepository.drawQuestions(room.difficulty, 1_000_000, room.topicId);
     if (questions.length === 0) throw new Error("当前难度没有可用题目");
     this.onGameStarted(room.code, {
       answerSource: room.answerSource, difficulty: room.difficulty,
       requestedCount: room.requestedCount, questionCount: Math.min(room.requestedCount, questions.length),
     });
     room.questions = questions;
-    room.regularQuestionCount = Math.min(room.requestedCount, questions.length);
+    room.regularQuestionCount = room.requestedCount === 0 ? 0 : Math.min(room.requestedCount, questions.length);
     room.currentIndex = 0;
     room.overtime = false;
     room.winnerSessionIds = undefined;
@@ -203,7 +224,7 @@ export class MultiplayerRoomManager {
     this.auditAnswer(room, player, answer, true);
     room.state = "REVEAL";
     room.roundWinnerSessionId = sessionId;
-    this.changed(room);
+    this.beginReveal(room);
     return { view: this.toView(room, sessionId, "抢答成功，得分 +1"), correct: true };
   }
 
@@ -287,14 +308,14 @@ export class MultiplayerRoomManager {
     this.auditAnswer(room, player, answer, true);
     room.state = "REVEAL";
     room.roundWinnerSessionId = sessionId;
-    this.changed(room);
+    this.beginReveal(room);
     return true;
   }
 
   next(roomCode: string, sessionId: string) {
     const room = this.getRoom(roomCode);
     this.assertHost(room, sessionId);
-    if (room.state !== "REVEAL" || room.revealTimedOut) throw new Error("当前不能进入下一题");
+    if (room.state !== "REVEAL") throw new Error("当前不能进入下一题");
     this.advanceAfterQuestion(room);
     return this.toView(room, sessionId);
   }
@@ -352,9 +373,10 @@ export class MultiplayerRoomManager {
     const now = Date.now();
     room.state = "ANSWERING";
     room.startedAt = now;
-    room.endsAt = now + this.durations[room.difficulty] * 1000;
+    room.endsAt = now + room.durationSeconds * 1000;
     room.roundWinnerSessionId = undefined;
     room.revealTimedOut = false;
+    room.revealEndsAt = undefined;
     room.timer = setTimeout(() => this.handleTimeout(room), room.endsAt - now + 20);
     room.timer.unref?.();
     this.changed(room);
@@ -365,13 +387,32 @@ export class MultiplayerRoomManager {
     this.clearTimer(room);
     room.state = "REVEAL";
     room.revealTimedOut = true;
+    this.beginReveal(room);
+  }
+
+  private beginReveal(room: Room): void {
+    room.revealEndsAt = room.preferences.autoNext ? Date.now() + room.preferences.revealSeconds * 1000 : undefined;
     this.changed(room);
-    room.timer = setTimeout(() => this.advanceAfterQuestion(room), 1_250);
-    room.timer.unref?.();
+    if (room.revealEndsAt) {
+      room.timer = setTimeout(() => this.advanceAfterQuestion(room), room.preferences.revealSeconds * 1000);
+      room.timer.unref?.();
+    }
   }
 
   private advanceAfterQuestion(room: Room): void {
     this.clearTimer(room);
+    if (room.requestedCount === 0) {
+      if (room.currentIndex + 1 >= room.questions.length) {
+        const nextDeck = this.questionRepository.drawQuestions(room.difficulty, 1_000_000, room.topicId);
+        if (nextDeck.length > 1 && nextDeck[0].id === room.questions.at(-1)?.id) {
+          [nextDeck[0], nextDeck[1]] = [nextDeck[1], nextDeck[0]];
+        }
+        room.questions.push(...nextDeck);
+      }
+      room.currentIndex += 1;
+      this.beginQuestion(room);
+      return;
+    }
     if (!room.overtime && room.currentIndex + 1 < room.regularQuestionCount) {
       room.currentIndex += 1;
       this.beginQuestion(room);
@@ -452,6 +493,10 @@ export class MultiplayerRoomManager {
       isHost: room.hostSessionId === sessionId,
       difficulty: room.difficulty,
       requestedCount: room.requestedCount,
+      topicId: room.topicId,
+      topicName: room.topicName,
+      durationSeconds: room.durationSeconds,
+      preferences: room.preferences,
       answerSource: room.answerSource,
       bilibiliConnected: room.answerSource === "BILIBILI" ? room.bilibiliConnected : undefined,
       players: [...room.players.values()]
@@ -473,12 +518,14 @@ export class MultiplayerRoomManager {
         crop: question.question,
         index: room.currentIndex + 1,
         total: room.overtime ? room.questions.length : room.regularQuestionCount,
-        durationSeconds: this.durations[room.difficulty],
+        durationSeconds: room.durationSeconds,
+        hintRemainingPercent: room.preferences.hintRemainingPercent,
         startedAt: room.startedAt,
         endsAt: room.endsAt,
         overtime: room.overtime,
       } : undefined,
       reveal,
+      revealEndsAt: room.revealEndsAt,
       rankingEndsAt: room.rankingEndsAt,
       winnerSessionIds: room.winnerSessionIds,
       feedback,

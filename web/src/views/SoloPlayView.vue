@@ -14,6 +14,7 @@ const error = ref("");
 const loading = ref(true);
 const now = ref(Date.now());
 const timeoutSubmitted = ref(false);
+const autoNextSubmitted = ref(false);
 let ticker: number | undefined;
 
 const secondsLeft = computed(() => game.value?.state === "ANSWERING"
@@ -22,6 +23,10 @@ const secondsLeft = computed(() => game.value?.state === "ANSWERING"
 const progress = computed(() => game.value
   ? Math.max(0, Math.min(100, (secondsLeft.value / game.value.question.durationSeconds) * 100))
   : 0);
+const showHint = computed(() => game.value?.state === "ANSWERING"
+  && progress.value <= game.value.question.hintRemainingPercent);
+const revealSecondsLeft = computed(() => game.value?.revealEndsAt
+  ? Math.max(0, Math.ceil((game.value.revealEndsAt - now.value) / 1000)) : 0);
 
 onMounted(async () => {
   await createGame();
@@ -31,6 +36,10 @@ onMounted(async () => {
       timeoutSubmitted.value = true;
       perform(() => soloApi.timeout(game.value!.sessionId));
     }
+    if (game.value?.state === "REVEAL" && game.value.revealEndsAt && revealSecondsLeft.value === 0 && !autoNextSubmitted.value) {
+      autoNextSubmitted.value = true;
+      void next();
+    }
   }, 200);
 });
 
@@ -39,6 +48,8 @@ onBeforeUnmount(() => window.clearInterval(ticker));
 async function createGame() {
   loading.value = true;
   error.value = "";
+  timeoutSubmitted.value = false;
+  autoNextSubmitted.value = false;
   const difficulty = String(route.query.difficulty ?? "medium") as Difficulty;
   const count = Number(route.query.count ?? 20);
   try {
@@ -54,6 +65,7 @@ async function perform(action: () => Promise<SoloGameView>) {
   error.value = "";
   try {
     game.value = await action();
+    if (game.value.state === "REVEAL") autoNextSubmitted.value = false;
     answer.value = "";
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "操作失败";
@@ -115,7 +127,7 @@ const endReasonText = computed(() => ({
               <input v-model="answer" autofocus maxlength="100" placeholder="输入答案" autocomplete="off" />
               <button class="button button--primary" type="submit"><Send :size="18" />提交</button>
             </form>
-            <div class="hint-line"><Lightbulb :size="17" /><span>{{ game.question.hint ?? '本题暂无提示' }}</span></div>
+            <div v-if="showHint" class="hint-line"><Lightbulb :size="17" /><span>{{ game.question.hint ?? '本题暂无提示' }}</span></div>
             <button class="button button--quiet" @click="perform(() => soloApi.skip(game!.sessionId))"><SkipForward :size="18" />跳过，生命 -1</button>
           </template>
 
@@ -126,6 +138,7 @@ const endReasonText = computed(() => ({
               <p class="answer-aliases" v-if="(game.reveal?.answers.length ?? 0) > 1">可接受：{{ game.reveal?.answers.join(' / ') }}</p>
             </div>
             <div class="reveal-stats"><span>得分<strong>{{ game.stats.score }}</strong></span><span>生命<strong>{{ game.stats.lives }}</strong></span></div>
+            <p v-if="game.revealEndsAt" class="reveal-countdown">{{ revealSecondsLeft }} 秒后自动继续</p>
             <button class="button button--primary" @click="next"><ArrowRight :size="19" />{{ game.question.index === game.question.total ? '查看结果' : '下一题' }}</button>
           </template>
 

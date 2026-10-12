@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { ArrowLeft, Play } from "lucide-vue-next";
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { Difficulty } from "../types";
+import { loadGameSetup, saveGamePreferences, type GamePreferences } from "../api/gameSetup";
 
 const router = useRouter();
 const difficulty = ref<Difficulty>("medium");
 const totalQuestions = ref(20);
+const preferences = ref<GamePreferences>({ hintRemainingPercent: 20, revealSeconds: 10, autoNext: false });
+const error = ref("");
+onMounted(async () => {
+  try { preferences.value = (await loadGameSetup()).preferences; }
+  catch (caught) { error.value = caught instanceof Error ? caught.message : "设置加载失败"; }
+});
 
 const difficulties: Array<{ value: Difficulty; label: string; seconds: number; description: string }> = [
   { value: "simple", label: "简单", seconds: 90, description: "适合热身" },
@@ -15,8 +22,11 @@ const difficulties: Array<{ value: Difficulty; label: string; seconds: number; d
   { value: "hell", label: "地狱", seconds: 10, description: "凭直觉作答" },
 ];
 
-function start() {
-  router.push({ path: "/solo/play", query: { difficulty: difficulty.value, count: totalQuestions.value } });
+async function start() {
+  try {
+    await saveGamePreferences(preferences.value);
+    await router.push({ path: "/solo/play", query: { difficulty: difficulty.value, count: totalQuestions.value } });
+  } catch (caught) { error.value = caught instanceof Error ? caught.message : "设置保存失败"; }
 }
 </script>
 
@@ -59,7 +69,15 @@ function start() {
         <p class="field-note">快速版本内置 3 道演示题，题库耗尽时会提前结算。</p>
       </fieldset>
 
+      <fieldset class="option-group solo-game-options">
+        <legend><span>03</span> 提示与揭晓</legend>
+        <label>剩余时间 {{ preferences.hintRemainingPercent }}% 时提示<input v-model.number="preferences.hintRemainingPercent" type="range" min="0" max="100" step="5" /></label>
+        <label class="setup-check"><input v-model="preferences.autoNext" type="checkbox" />自动进入下一题</label>
+        <label>答案展示 {{ preferences.revealSeconds }} 秒<input v-model.number="preferences.revealSeconds" type="range" min="1" max="60" step="1" /></label>
+      </fieldset>
+
       <div class="setup-action">
+        <p v-if="error" class="error-text">{{ error }}</p>
         <span>CONFIGURATION READY</span>
         <button class="button button--primary start-button" @click="start"><Play :size="20" />开始识别</button>
       </div>

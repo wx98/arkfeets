@@ -223,12 +223,24 @@ h1 { margin: 0 0 18px; font-size: clamp(62px, 7.2vw, 108px); line-height: .86; l
 .tech-range::-moz-range-thumb { width: 13px; height: 20px; border: 2px solid #202624; border-radius: 0; background: var(--signal); box-shadow: 2px 2px 0 #858f7b; }
 .tech-range:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
 .tech-range:disabled { cursor: not-allowed; }
-.custom-duration-option { min-width: 0; display: grid; place-content: center; gap: 3px; padding: 3px 5px; border-left: 1px solid #555a5b; color: #d9dcda; background: #25282a; text-align: center; }
+.custom-duration-option { min-width: 0; display: grid; place-content: center; gap: 3px; padding: 3px 5px; border: 0; border-left: 1px solid #555a5b; color: #d9dcda; background: #25282a; text-align: center; font-size: 12px; font-weight: 900; cursor: pointer; }
 .custom-duration-option.active { color: var(--ink); background: var(--signal); }
-.custom-duration-option > button { padding: 0; border: 0; color: inherit; background: transparent; font-size: 12px; font-weight: 900; cursor: pointer; }
-.custom-duration-input { display: flex; align-items: center; justify-content: center; gap: 2px; font-size: 10px; }
-.custom-duration-option input { position: static; width: min(58px,100%); height: 22px; padding: 0 2px; border: 1px solid #858d86; border-radius: 0; opacity: 1; color: #fff; background: #1b201e; text-align: center; font-size: 12px; font-weight: 800; pointer-events: auto; }
-.custom-duration-option input:focus { outline: 2px solid #a8b500; outline-offset: 1px; }
+.custom-duration-option small { font-size: 10px; opacity: .75; }
+.custom-duration-option:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.custom-time-control { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 18px; padding: 12px 0 2px; transition: opacity .15s; }
+.custom-time-control--disabled { opacity: .38; }
+.custom-time-track { position: relative; min-width: 0; padding-top: 33px; }
+.custom-time-track .tech-range { width: 100%; }
+.custom-time-current { position: absolute; top: 0; left: clamp(35px,var(--thumb-position),calc(100% - 35px)); transform: translateX(-50%); display: flex; align-items: center; gap: 3px; padding: 3px 5px; border: 1px solid #89938c; color: var(--signal); background: #252b28; font-size: 11px; font-weight: 900; }
+.custom-time-current input { width: 34px; padding: 0; border: 0; border-radius: 0; outline: 0; color: inherit; background: transparent; text-align: right; font-size: 13px; font-weight: 900; appearance: textfield; }
+.custom-time-current input::-webkit-inner-spin-button, .custom-time-bounds input::-webkit-inner-spin-button { appearance: none; margin: 0; }
+.custom-time-current:focus-within { border-color: var(--signal); box-shadow: 0 0 0 2px #596d1b; }
+.custom-time-scale { display: flex; justify-content: space-between; color: #a6afaa; font-size: 10px; font-weight: 800; }
+.custom-time-bounds { display: grid; grid-template-columns: auto 50px auto 50px; align-items: center; gap: 6px; padding-bottom: 12px; color: #adb5b0; font-size: 10px; font-weight: 800; }
+.custom-time-bounds label { display: block; }
+.custom-time-bounds input { width: 50px; height: 29px; padding: 0 4px; border: 1px solid #7d8980; border-radius: 0; color: #fff; background: #252b28; text-align: center; font-size: 12px; font-weight: 800; appearance: textfield; }
+.custom-time-bounds input:focus { outline: 2px solid var(--signal); outline-offset: 1px; }
+.custom-time-bounds input:disabled, .custom-time-current input:disabled { cursor: not-allowed; }
 .create-config .segmented-control label { flex-direction: column; gap: 2px; }
 .create-config .segmented-control label small { font-size: 10px; opacity: .75; }
 .create-config .segmented-control:not(.difficulty-segments) { grid-template-columns: repeat(4, 1fr); }
@@ -574,6 +586,8 @@ body .question-hover-preview,
   .terminal-form, .create-config { min-height: 340px; padding: 24px 18px; }
   .create-config .difficulty-segments { grid-template-columns: repeat(2,1fr); }
   .custom-duration-option { grid-column: 1 / -1; min-height: 50px; }
+  .custom-time-control { grid-template-columns: minmax(0,1fr); gap: 8px; }
+  .custom-time-bounds { justify-content: end; padding-bottom: 0; }
   .source-selector { grid-template-columns: 1fr; }
   .room-code { margin-right: auto; }
   .multi-room-page .room-code { display: none; }

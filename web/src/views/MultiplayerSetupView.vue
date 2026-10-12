@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeft, Cable, LogIn, Radio, Tv, Users } from "lucide-vue-next";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { getClientSessionId, multiplayerSocket } from "../multiplayer/socket";
 import type { AnswerSource, Difficulty } from "../types";
@@ -16,6 +16,10 @@ const topics = ref<GameTopic[]>([]);
 const topicId = ref("");
 const customDuration = ref(false);
 const durationSeconds = ref(60);
+const durationMin = ref(5);
+const durationMax = ref(60);
+const durationMinInput = ref("5");
+const durationMaxInput = ref("60");
 const preferences = ref<GamePreferences>({ hintRemainingPercent: 20, revealSeconds: 10, autoNext: false });
 const difficultyOptions: Array<{ value: Difficulty; label: string; seconds: number }> = [
   { value: "simple", label: "简单", seconds: 90 },
@@ -24,6 +28,10 @@ const difficultyOptions: Array<{ value: Difficulty; label: string; seconds: numb
   { value: "hell", label: "地狱", seconds: 10 },
 ];
 const selectedDuration = computed(() => customDuration.value ? durationSeconds.value : difficultyOptions.find(item => item.value === difficulty.value)!.seconds);
+const durationFill = computed(() => {
+  const value = Number(durationSeconds.value);
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, (value - durationMin.value) / (durationMax.value - durationMin.value) * 100)) : 0;
+});
 const busy = ref(false);
 const error = ref("");
 onMounted(async () => {
@@ -34,10 +42,23 @@ onMounted(async () => {
     preferences.value = setup.preferences;
   } catch (caught) { error.value = caught instanceof Error ? caught.message : "设置加载失败"; }
 });
-watch(difficulty, value => {
-  customDuration.value = false;
-  durationSeconds.value = difficultyOptions.find(item => item.value === value)!.seconds;
-});
+
+function setDurationRange(edge: "min" | "max") {
+  if (edge === "min") {
+    durationMin.value = Math.max(5, Math.min(599, Math.round(Number(durationMinInput.value) || 5)));
+    durationMax.value = Math.max(durationMax.value, durationMin.value + 1);
+  } else {
+    durationMax.value = Math.max(6, Math.min(600, Math.round(Number(durationMaxInput.value) || 60)));
+    durationMin.value = Math.min(durationMin.value, durationMax.value - 1);
+  }
+  durationSeconds.value = Math.max(durationMin.value, Math.min(durationMax.value, durationSeconds.value));
+  durationMinInput.value = String(durationMin.value);
+  durationMaxInput.value = String(durationMax.value);
+}
+
+function normalizeDuration() {
+  durationSeconds.value = Math.max(durationMin.value, Math.min(durationMax.value, Math.round(Number(durationSeconds.value) || durationMin.value)));
+}
 
 async function enter(mode: "create" | "join") {
   error.value = "";
@@ -100,11 +121,21 @@ async function enter(mode: "create" | "join") {
             <legend>难度</legend>
             <div class="segmented-control difficulty-segments">
               <label v-for="item in difficultyOptions" :key="item.value" :class="{ active: !customDuration && difficulty === item.value }">
-                <input v-model="difficulty" type="radio" :value="item.value" />{{ item.label }}<small>{{ item.seconds }}s</small>
+                <input name="room-difficulty" type="radio" :checked="!customDuration && difficulty === item.value" @change="difficulty = item.value; customDuration = false" />{{ item.label }}<small>{{ item.seconds }}s</small>
               </label>
-              <div class="custom-duration-option" :class="{ active: customDuration }" role="group" aria-label="自定义单题时间">
-                <button type="button" :aria-pressed="customDuration" @click="customDuration = true">自定义</button>
-                <span class="custom-duration-input"><input v-model.number="durationSeconds" type="number" min="5" max="600" step="1" aria-label="自定义单题秒数" @focus="customDuration = true" @input="customDuration = true" /><span>秒</span></span>
+              <button class="custom-duration-option" :class="{ active: customDuration }" type="button" :aria-pressed="customDuration" @click="customDuration = true">自定义<small>{{ durationSeconds }}s</small></button>
+            </div>
+            <div class="custom-time-control" :class="{ 'custom-time-control--disabled': !customDuration }">
+              <div class="custom-time-track">
+                <label class="custom-time-current" :style="{ '--thumb-position': `${durationFill}%` }"><input v-model.number="durationSeconds" type="number" :min="durationMin" :max="durationMax" step="1" :disabled="!customDuration" aria-label="当前单题秒数" @change="normalizeDuration" /><span>s</span></label>
+                <input v-model.number="durationSeconds" class="tech-range" :style="{ '--fill': `${durationFill}%` }" type="range" :min="durationMin" :max="durationMax" step="1" :disabled="!customDuration" aria-label="自定义单题时间" />
+                <div class="custom-time-scale"><span>{{ durationMin }}s</span><span>{{ durationMax }}s</span></div>
+              </div>
+              <div class="custom-time-bounds">
+                <span>范围 / 秒</span>
+                <label><input v-model="durationMinInput" type="number" min="5" max="599" step="1" :disabled="!customDuration" aria-label="时间下限" @change="setDurationRange('min')" /></label>
+                <span>—</span>
+                <label><input v-model="durationMaxInput" type="number" min="6" max="600" step="1" :disabled="!customDuration" aria-label="时间上限" @change="setDurationRange('max')" /></label>
               </div>
             </div>
           </fieldset>

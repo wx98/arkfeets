@@ -4,6 +4,7 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { Difficulty } from "../types";
 import { loadGameSetup, saveGamePreferences, type GamePreferences } from "../api/gameSetup";
+import { appName } from "../api/site";
 
 const router = useRouter();
 const difficulty = ref<Difficulty>("medium");
@@ -34,7 +35,7 @@ async function start() {
   <main class="page-shell setup-page">
     <header class="topbar">
       <button class="icon-button" title="返回首页" @click="router.push('/')"><ArrowLeft :size="20" /></button>
-      <span class="brand-mark">粥批来猜∠ <small>PRTS</small></span>
+      <span class="brand-mark">{{ appName }} <small>PRTS</small></span>
       <span class="topbar__meta">SOLO CONFIG / 单人行动配置</span>
     </header>
 
@@ -66,7 +67,7 @@ async function start() {
             {{ count }} 题
           </label>
         </div>
-        <p class="field-note">快速版本内置 3 道演示题，题库耗尽时会提前结算。</p>
+        <p class="field-note">题库耗尽时会提前结算。</p>
       </fieldset>
 
       <fieldset class="option-group solo-game-options">

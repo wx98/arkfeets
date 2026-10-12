@@ -4,7 +4,8 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { getClientSessionId, multiplayerSocket } from "../multiplayer/socket";
 import type { AnswerSource, Difficulty } from "../types";
-import { loadGameSetup, saveGamePreferences, type GamePreferences, type GameTopic } from "../api/gameSetup";
+import { appName } from "../api/site";
+import { loadGameSetup, saveRoomSetup, type GamePreferences, type GameTopic, type RoomSetup } from "../api/gameSetup";
 
 const router = useRouter();
 const nickname = ref(localStorage.getItem("arkfeets:nickname") ?? "博士");
@@ -40,6 +41,20 @@ onMounted(async () => {
     topics.value = setup.topics;
     topicId.value = setup.topics.find(item => item.isDefault)?.id ?? setup.topics[0]?.id ?? "";
     preferences.value = setup.preferences;
+    if (setup.roomSetup) {
+      const saved = setup.roomSetup;
+      if (setup.topics.some(item => item.id === saved.topicId)) topicId.value = saved.topicId;
+      difficulty.value = saved.difficulty;
+      requestedCount.value = saved.requestedCount;
+      answerSource.value = saved.answerSource;
+      customDuration.value = saved.customDuration;
+      durationSeconds.value = saved.durationSeconds;
+      durationMin.value = saved.durationMin;
+      durationMax.value = saved.durationMax;
+      durationMinInput.value = String(saved.durationMin);
+      durationMaxInput.value = String(saved.durationMax);
+      preferences.value = saved.preferences;
+    }
   } catch (caught) { error.value = caught instanceof Error ? caught.message : "设置加载失败"; }
 });
 
@@ -76,11 +91,22 @@ async function enter(mode: "create" | "join") {
       ? await (async () => {
         if (!topicId.value) throw new Error("请选择主题");
         if (!Number.isInteger(selectedDuration.value) || selectedDuration.value < 5 || selectedDuration.value > 600) throw new Error("单题时间需为 5-600 秒");
-        await saveGamePreferences(preferences.value);
         return multiplayerSocket.create({ ...identity, difficulty: difficulty.value, requestedCount: requestedCount.value, topicId: topicId.value, durationSeconds: selectedDuration.value, preferences: preferences.value, answerSource: answerSource.value });
       })()
       : await multiplayerSocket.join(identity);
-    if (room) await router.push(`/multi/${encodeURIComponent(room.roomCode)}`);
+    if (room) {
+      let saveNotice = "";
+      if (mode === "create") {
+        const setup: RoomSetup = {
+          topicId: topicId.value, difficulty: difficulty.value, requestedCount: requestedCount.value as RoomSetup["requestedCount"],
+          answerSource: answerSource.value, customDuration: customDuration.value, durationSeconds: durationSeconds.value,
+          durationMin: durationMin.value, durationMax: durationMax.value, preferences: preferences.value,
+        };
+        try { await saveRoomSetup(setup); }
+        catch { saveNotice = "房间已创建，但本次建房配置未能保存"; }
+      }
+      await router.push({ path: `/multi/${encodeURIComponent(room.roomCode)}`, query: saveNotice ? { notice: saveNotice } : {} });
+    }
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "无法进入房间";
   } finally {
@@ -93,7 +119,7 @@ async function enter(mode: "create" | "join") {
   <main class="page-shell multi-setup-page">
     <header class="topbar">
       <button class="icon-button" title="返回首页" @click="router.push('/')"><ArrowLeft :size="20" /></button>
-      <span class="brand-mark">粥批来猜∠ <small>MULTI</small></span>
+      <span class="brand-mark">{{ appName }} <small>MULTI</small></span>
       <span class="topbar__meta">ROOM TERMINAL / 多人房间</span>
     </header>
 

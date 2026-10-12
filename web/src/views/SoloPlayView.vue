@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Heart, Lightbulb, RotateCcw, Send, SkipForward, Timer, Trophy } from "lucide-vue-next";
+import { ArrowLeft, ArrowRight, Heart, RotateCcw, Send, SkipForward, Timer, Trophy } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { soloApi } from "../api/solo";
@@ -87,7 +87,7 @@ async function next() {
 const endReasonText = computed(() => ({
   COMPLETED: "任务完成",
   LIFE_EMPTY: "生命耗尽",
-  QUESTION_EXHAUSTED: "演示题库已全部完成",
+  QUESTION_EXHAUSTED: "题库已全部完成",
 }[game.value?.endReason ?? "COMPLETED"]));
 </script>
 
@@ -111,6 +111,7 @@ const endReasonText = computed(() => ({
       <section class="game-layout">
         <div class="game-stage">
           <div class="stage-label"><span>OPTICAL FEED</span><strong>LIVE</strong></div>
+          <div class="game-hint-slot" aria-live="polite"><div v-if="showHint" class="game-hint-banner">{{ game.question.hint || '本题暂无提示' }}</div></div>
           <div class="canvas-wrap">
             <GameCanvas :question="game.question" :reveal="game.reveal" :state="game.state" />
             <div v-if="game.feedback" class="feedback-banner">{{ game.feedback }}</div>
@@ -127,7 +128,6 @@ const endReasonText = computed(() => ({
               <input v-model="answer" autofocus maxlength="100" placeholder="输入答案" autocomplete="off" />
               <button class="button button--primary" type="submit"><Send :size="18" />提交</button>
             </form>
-            <div v-if="showHint" class="hint-line"><Lightbulb :size="17" /><span>{{ game.question.hint ?? '本题暂无提示' }}</span></div>
             <button class="button button--quiet" @click="perform(() => soloApi.skip(game!.sessionId))"><SkipForward :size="18" />跳过，生命 -1</button>
           </template>
 

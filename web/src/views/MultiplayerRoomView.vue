@@ -10,7 +10,7 @@ const route = useRoute();
 const router = useRouter();
 const room = ref<MultiplayerRoomView>();
 const answer = ref("");
-const error = ref("");
+const error = ref(typeof route.query.notice === "string" ? route.query.notice : "");
 const loading = ref(true);
 const starting = ref(false);
 const connectionState = ref<ConnectionState>("CONNECTING");
@@ -221,6 +221,7 @@ async function leave() {
       <section class="game-layout multi-play-layout">
         <div class="game-stage">
           <div class="stage-label"><span>{{ room.question?.overtime ? 'OVERTIME FEED' : 'OPTICAL FEED' }}</span><strong>{{ room.question?.overtime ? 'EX' : 'LIVE' }}</strong></div>
+          <div class="game-hint-slot" aria-live="polite"><div v-if="showHint" class="game-hint-banner">{{ room.question?.hint || '本题暂无提示' }}</div></div>
           <div class="canvas-wrap" v-if="room.question">
             <GameCanvas :question="room.question" :reveal="room.reveal" :state="room.state" />
             <div v-if="room.answerSource === 'BILIBILI' && danmakuEnabled" class="live-danmaku-layer" aria-live="off">
@@ -247,7 +248,6 @@ async function leave() {
           </div>
 
           <template v-if="room.state === 'ANSWERING'">
-            <div v-if="showHint" class="hint-line"><span>{{ room.question?.hint || '本题暂无提示' }}</span></div>
             <template v-if="room.answerSource === 'BILIBILI'">
               <div><p class="eyebrow">BILIBILI LIVE / 直播弹幕</p><h2>{{ room.bilibiliConnected ? '弹幕抢答中' : '弹幕连接中断' }}</h2></div>
               <div class="external-api-console"><Radio :size="22" /><span>{{ room.bilibiliConnected ? 'LIVE' : 'RECONNECTING' }}</span><strong>文字弹幕作为答案</strong></div>

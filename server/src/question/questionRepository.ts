@@ -65,6 +65,16 @@ export class QuestionRepository {
     return existsSync(path) ? topicsSchema.parse(JSON.parse(readFileSync(path, "utf8"))) : initialTopics;
   }
 
+  getEnabledQuestionCount(): number {
+    return this.questions.filter(question => question.enabled).length;
+  }
+
+  getRandomOriginalImageUrl(exclude?: string): string | null {
+    const images = [...new Set(this.questions.filter(question => question.enabled).map(question => question.originalImageUrl))];
+    const choices = images.length > 1 ? images.filter(image => image !== exclude) : images;
+    return choices.length ? choices[Math.floor(Math.random() * choices.length)] : null;
+  }
+
   drawQuestions(difficulty: Difficulty, requestedCount: number, topicId?: string): Question[] {
     const pool = this.questions.filter((question) => question.enabled && question.difficulty.includes(difficulty)
       && (!topicId || question.topics?.includes(topicId)));

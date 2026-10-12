@@ -18,7 +18,7 @@ import { relayLiveDanmaku } from "./multiplayer/liveDanmakuRelay.js";
 import { managerCallbacks, registerMultiplayerGateway } from "./multiplayer/socketGateway.js";
 import { QuestionRepository } from "./question/questionRepository.js";
 import { SoloSessionManager } from "./solo/soloSessionManager.js";
-import { GamePreferencesStore, gamePreferencesSchema } from "./gamePreferences.js";
+import { GamePreferencesStore, gamePreferencesSchema, roomSetupSchema } from "./gamePreferences.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -34,6 +34,7 @@ const preferencesStore = new GamePreferencesStore(join(currentDir, "../config.js
 const config = JSON.parse(readFileSync(join(currentDir, "../config.json"), "utf8")) as {
   adminPassword: string;
   adminSessionHours?: number;
+  appName?: string;
 };
 const questionRepository = new QuestionRepository(resourceDirectory);
 const soloSessionManager = new SoloSessionManager(questionRepository, () => preferencesStore.read());
@@ -44,12 +45,25 @@ const gameAuditReader = new GameAuditReader(join(currentDir, "../logs/games"), i
 let bilibiliBridge: BilibiliDanmakuBridge;
 
 app.use("/full-data", express.static(join(resourceDirectory, "full_data")));
+app.get("/api/site", (request, response) => {
+  response.setHeader("Cache-Control", "no-store");
+  const exclude = typeof request.query.exclude === "string" ? request.query.exclude : undefined;
+  response.json({
+    appName: typeof config.appName === "string" ? config.appName.trim() || "粥粥图猜猜" : "粥粥图猜猜",
+    homeImageUrl: questionRepository.getRandomOriginalImageUrl(exclude),
+    questionCount: questionRepository.getEnabledQuestionCount(),
+  });
+});
 app.use("/api/solo", createSoloRoutes(soloSessionManager));
 app.get("/api/game/setup", (_request, response) => {
-  response.json({ topics: questionRepository.getTopics(), preferences: preferencesStore.read() });
+  response.json({ topics: questionRepository.getTopics(), preferences: preferencesStore.read(), roomSetup: preferencesStore.readRoomSetup() });
 });
 app.put("/api/game/preferences", (request, response) => {
   try { response.json(preferencesStore.save(gamePreferencesSchema.parse(request.body))); }
+  catch (error) { response.status(400).json({ message: error instanceof Error ? error.message : "保存失败" }); }
+});
+app.put("/api/game/room-setup", (request, response) => {
+  try { response.json(preferencesStore.saveRoomSetup(roomSetupSchema.parse(request.body))); }
   catch (error) { response.status(400).json({ message: error instanceof Error ? error.message : "保存失败" }); }
 });
 
@@ -103,5 +117,5 @@ if (existsSync(webDist)) {
 }
 
 httpServer.listen(port, host, () => {
-  console.log(`粥批来猜∠ server: http://localhost:${port}`);
+  console.log(`${config.appName?.trim() || "粥粥图猜猜"} server: http://localhost:${port}`);
 });

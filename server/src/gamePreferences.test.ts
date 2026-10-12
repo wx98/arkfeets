@@ -18,4 +18,25 @@ describe("GamePreferencesStore", () => {
       expect(() => store.save({ hintRemainingPercent: 20, revealSeconds: 61, autoNext: true })).toThrow();
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
+
+  it("persists room creation options without losing other configuration", () => {
+    const directory = mkdtempSync(join(tmpdir(), "arkfeets-room-settings-"));
+    const path = join(directory, "config.json");
+    writeFileSync(path, JSON.stringify({ adminPassword: "secret", bilibili: { roomId: 123 } }));
+    try {
+      const store = new GamePreferencesStore(path);
+      expect(store.readRoomSetup()).toBeNull();
+      const setup = {
+        topicId: "脚", difficulty: "hard" as const, requestedCount: 0 as const,
+        answerSource: "BILIBILI" as const, customDuration: true,
+        durationSeconds: 42, durationMin: 8, durationMax: 90,
+        preferences: { hintRemainingPercent: 30, revealSeconds: 12, autoNext: true },
+      };
+      store.saveRoomSetup(setup);
+      expect(store.readRoomSetup()).toEqual(setup);
+      expect(store.read()).toEqual(setup.preferences);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ adminPassword: "secret", bilibili: { roomId: 123 } });
+      expect(() => store.saveRoomSetup({ ...setup, durationSeconds: 91 })).toThrow();
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
 });

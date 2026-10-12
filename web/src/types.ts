@@ -20,7 +20,7 @@ export interface SoloGameView {
     endsAt: number;
     hintRemainingPercent: number;
   };
-  reveal?: { imageUrl: string; answers: string[] };
+  reveal?: { imageUrl: string; answers: string[]; correct: boolean };
   revealEndsAt?: number;
   preferences: GamePreferences;
   stats: { score: number; lives: number; attempted: number; correctRate: number };

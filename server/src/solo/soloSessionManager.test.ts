@@ -17,7 +17,9 @@ describe("SoloSessionManager preferences", () => {
     const manager = new SoloSessionManager({ drawQuestions: () => [question] } as unknown as QuestionRepository);
     const game = manager.create("medium", 20);
     expect(game.question.hintRemainingPercent).toBe(20);
-    expect(manager.timeout(game.sessionId, true).revealEndsAt).toBeUndefined();
+    const reveal = manager.timeout(game.sessionId, true);
+    expect(reveal.revealEndsAt).toBeUndefined();
+    expect(reveal.reveal?.correct).toBe(false);
   });
 
   it("starts an auto-reveal deadline after a correct answer", () => {
@@ -29,5 +31,14 @@ describe("SoloSessionManager preferences", () => {
     const reveal = manager.answer(game.sessionId, "answer");
     expect(reveal.question.hintRemainingPercent).toBe(35);
     expect(reveal.revealEndsAt).toBe(Date.now() + 12_000);
+    expect(reveal.reveal?.correct).toBe(true);
+  });
+
+  it("does not celebrate skipped questions or carry a win into the next question", () => {
+    const manager = new SoloSessionManager({ drawQuestions: () => [question, { ...question, id: "two" }] } as unknown as QuestionRepository);
+    const game = manager.create("medium", 20);
+    expect(manager.skip(game.sessionId).reveal?.correct).toBe(false);
+    expect(manager.next(game.sessionId).reveal).toBeUndefined();
+    expect(manager.answer(game.sessionId, "answer").reveal?.correct).toBe(true);
   });
 });

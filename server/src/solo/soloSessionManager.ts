@@ -27,6 +27,7 @@ interface SoloSession {
   startedAt: number;
   endsAt: number;
   feedback?: string;
+  revealCorrect?: boolean;
   endReason?: SoloEndReason;
   preferences: GamePreferences;
   revealEndsAt?: number;
@@ -74,6 +75,7 @@ export class SoloSessionManager {
     session.attempted += 1;
     session.lives = isFast ? Math.min(10, session.lives + 1) : session.lives;
     session.state = "REVEAL";
+    session.revealCorrect = true;
     this.beginReveal(session);
     session.feedback = isFast ? "命中，快速作答生命 +1" : "命中";
     return this.toView(session);
@@ -85,6 +87,7 @@ export class SoloSessionManager {
     session.attempted += 1;
     session.lives = Math.max(0, session.lives - 1);
     session.state = "REVEAL";
+    session.revealCorrect = false;
     this.beginReveal(session);
     session.feedback = "已跳过，生命 -1";
     return this.toView(session);
@@ -97,6 +100,7 @@ export class SoloSessionManager {
     session.attempted += 1;
     session.lives = Math.max(0, session.lives - 1);
     session.state = "REVEAL";
+    session.revealCorrect = false;
     this.beginReveal(session);
     session.feedback = "时间到，生命 -1";
     return this.toView(session);
@@ -116,6 +120,7 @@ export class SoloSessionManager {
     const now = Date.now();
     session.state = "ANSWERING";
     session.revealEndsAt = undefined;
+    session.revealCorrect = undefined;
     session.startedAt = now;
     session.endsAt = now + durationByDifficulty[session.difficulty] * 1000;
     session.feedback = undefined;
@@ -152,6 +157,7 @@ export class SoloSessionManager {
     const reveal = session.state === "ANSWERING" ? undefined : {
       imageUrl: question.originalImageUrl,
       answers: question.answers,
+      correct: session.revealCorrect === true,
     };
     return {
       sessionId: session.id,

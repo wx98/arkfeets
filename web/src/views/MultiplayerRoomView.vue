@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, Cable, Crown, LogOut, Medal, MessageSquareText, 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import GameCanvas from "../components/GameCanvas.vue";
+import GameWinBanner from "../components/GameWinBanner.vue";
 import { getClientSessionId, multiplayerSocket, type ConnectionState } from "../multiplayer/socket";
 import type { LiveDanmakuEvent, MultiplayerRoomView } from "../types";
 
@@ -221,7 +222,10 @@ async function leave() {
       <section class="game-layout multi-play-layout">
         <div class="game-stage">
           <div class="stage-label"><span>{{ room.question?.overtime ? 'OVERTIME FEED' : 'OPTICAL FEED' }}</span><strong>{{ room.question?.overtime ? 'EX' : 'LIVE' }}</strong></div>
-          <div class="game-hint-slot" aria-live="polite"><div v-if="showHint" class="game-hint-banner">{{ room.question?.hint || '本题暂无提示' }}</div></div>
+          <div class="game-hint-slot" aria-live="polite">
+            <GameWinBanner v-if="room.state === 'REVEAL' && !room.reveal?.timedOut && room.reveal?.winnerNickname" :nickname="room.reveal.winnerNickname" />
+            <div v-else-if="showHint" class="game-hint-banner">{{ room.question?.hint || '本题暂无提示' }}</div>
+          </div>
           <div class="canvas-wrap" v-if="room.question">
             <GameCanvas :question="room.question" :reveal="room.reveal" :state="room.state" />
             <div v-if="room.answerSource === 'BILIBILI' && danmakuEnabled" class="live-danmaku-layer" aria-live="off">

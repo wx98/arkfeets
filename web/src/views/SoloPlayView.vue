@@ -4,10 +4,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { soloApi } from "../api/solo";
 import GameCanvas from "../components/GameCanvas.vue";
+import GameWinBanner from "../components/GameWinBanner.vue";
 import type { Difficulty, SoloGameView } from "../types";
 
 const route = useRoute();
 const router = useRouter();
+const nickname = localStorage.getItem("arkfeets:nickname")?.trim() || "博士";
 const game = ref<SoloGameView>();
 const answer = ref("");
 const error = ref("");
@@ -111,7 +113,10 @@ const endReasonText = computed(() => ({
       <section class="game-layout">
         <div class="game-stage">
           <div class="stage-label"><span>OPTICAL FEED</span><strong>LIVE</strong></div>
-          <div class="game-hint-slot" aria-live="polite"><div v-if="showHint" class="game-hint-banner">{{ game.question.hint || '本题暂无提示' }}</div></div>
+          <div class="game-hint-slot" aria-live="polite">
+            <GameWinBanner v-if="game.state === 'REVEAL' && game.reveal?.correct" :nickname="nickname" />
+            <div v-else-if="showHint" class="game-hint-banner">{{ game.question.hint || '本题暂无提示' }}</div>
+          </div>
           <div class="canvas-wrap">
             <GameCanvas :question="game.question" :reveal="game.reveal" :state="game.state" />
             <div v-if="game.feedback" class="feedback-banner">{{ game.feedback }}</div>

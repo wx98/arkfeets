@@ -117,6 +117,18 @@ describe("QuestionAdminService", () => {
     expect(service.list().questions.find((question) => question.id === "新题")?.topic).toEqual([topic.id]);
   });
 
+  it("returns only the selected topic's question previews", () => {
+    const service = createService();
+    const topic = service.createTopic("造型");
+    service.createQuestion({ ...validInput(["答案"], "new.png"), title: "新题", topic: [topic.id], tags: ["测试标签"], enabled: false });
+    const previews = service.listTopicQuestions(topic.id);
+    expect(previews).toHaveLength(1);
+    expect(previews[0]).toMatchObject({ id: "新题", title: "新题", tags: ["测试标签"], originalImageUrl: "/full-data/new.png" });
+    expect(previews[0].crop).toBeTruthy();
+    expect(service.listTopicQuestions("脚").map((item) => item.id)).toEqual(["existing"]);
+    expect(() => service.listTopicQuestions("不存在")).toThrow("主题不存在");
+  });
+
   it("keeps a topic while a deleted question still references it", () => {
     const service = createService();
     const topic = service.createTopic("造型");

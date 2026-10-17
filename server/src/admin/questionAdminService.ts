@@ -76,6 +76,29 @@ export class QuestionAdminService {
     return this.readTopics().map((topic) => ({ ...topic, questionCount: counts.get(topic.id) ?? 0 }));
   }
 
+  listTopicQuestions(id: string) {
+    const topicId = topicIdSchema.parse(id);
+    if (!this.readTopics().some((topic) => topic.id === topicId)) throw new Error("主题不存在");
+    return this.readCatalogue().filter((entry) => entry.topic.includes(topicId)).map((entry) => {
+      let info: QuestionRecord | null = null;
+      try {
+        info = this.readJsonCached(this.questionPath(entry.id), (raw) => questionRecordSchema.parse(raw));
+      } catch {
+        // Keep broken records visible so an administrator can open and repair them.
+      }
+      return {
+        id: entry.id,
+        title: info?.title ?? entry.id,
+        tags: info?.tags ?? [],
+        hint: info?.hint ?? "",
+        originalImage: info?.originalImage ?? "",
+        originalImageUrl: info?.originalImage ? imageUrl(info.originalImage) : null,
+        crop: info?.question ?? null,
+        enabled: info?.enabled ?? false,
+      };
+    });
+  }
+
   private buildLibrary() {
     const catalogue = this.readCatalogue();
     const topics = this.readTopics();

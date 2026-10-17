@@ -5,7 +5,7 @@ import {
   PanelLeftClose, PanelLeftOpen, Plus, RotateCcw, Save, Scissors, Search, Trash2, Upload, X, ZoomIn, ZoomOut,
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import CropImageCanvas from "../components/CropImageCanvas.vue";
 import ImageCropEditor from "../components/ImageCropEditor.vue";
 import type { CropRect, Difficulty } from "../types";
@@ -69,6 +69,7 @@ const difficultyOptions: Array<{ value: Difficulty; label: string }> = [
   { value: "hard", label: "困难" }, { value: "hell", label: "地狱" },
 ];
 const router = useRouter();
+const route = useRoute();
 const token = ref(sessionStorage.getItem("arkfeets:admin-token") ?? "");
 const checkingSession = ref(true);
 const password = ref("");
@@ -236,13 +237,15 @@ function handleGlobalClick(event: MouseEvent) {
 }
 
 async function restoreSession() {
+  const requestedQuestion = typeof route.query.question === "string" ? route.query.question : "";
   try {
-    await loadLibrary();
+    if (requestedQuestion) mode.value = "questions";
+    await loadLibrary(requestedQuestion);
   } catch {
     if (token.value) {
       token.value = "";
       sessionStorage.removeItem("arkfeets:admin-token");
-      try { await loadLibrary(); } catch { /* The login form remains available. */ }
+      try { await loadLibrary(requestedQuestion); } catch { /* The login form remains available. */ }
     }
   } finally { checkingSession.value = false; }
 }
@@ -253,7 +256,9 @@ async function login() {
     token.value = session.token;
     sessionStorage.setItem("arkfeets:admin-token", session.token);
     password.value = "";
-    await loadLibrary();
+    const requestedQuestion = typeof route.query.question === "string" ? route.query.question : "";
+    if (requestedQuestion) mode.value = "questions";
+    await loadLibrary(requestedQuestion);
   }, "管理终端已解锁");
 }
 

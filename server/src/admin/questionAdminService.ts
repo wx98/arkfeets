@@ -104,6 +104,7 @@ export class QuestionAdminService {
         tags: info?.tags ?? [],
         hint: info?.hint ?? "",
         originalImage: info?.originalImage ?? "",
+        question: info?.question ?? null,
         thumbnailUrl: info ? this.topicThumbnailUrl(entry.id, info) : null,
         enabled: info?.enabled ?? false,
       };

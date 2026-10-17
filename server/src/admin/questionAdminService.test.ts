@@ -123,7 +123,7 @@ describe("QuestionAdminService", () => {
     service.createQuestion({ ...validInput(["答案"], "new.png"), title: "新题", topic: [topic.id], tags: ["测试标签"], enabled: false });
     const previews = service.listTopicQuestions(topic.id);
     expect(previews).toHaveLength(1);
-    expect(previews[0]).toMatchObject({ id: "新题", title: "新题", tags: ["测试标签"], thumbnailUrl: expect.stringMatching(/^\/api\/admin\/questions\//) });
+    expect(previews[0]).toMatchObject({ id: "新题", title: "新题", tags: ["测试标签"], question: validInput(["答案"], "new.png").question, thumbnailUrl: expect.stringMatching(/^\/api\/admin\/questions\//) });
     expect(JSON.stringify(previews)).not.toContain("/full-data/");
     expect(service.listTopicQuestions("脚").map((item) => item.id)).toEqual(["existing"]);
     expect(() => service.listTopicQuestions("不存在")).toThrow("主题不存在");

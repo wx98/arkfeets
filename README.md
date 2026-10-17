@@ -9,6 +9,7 @@
 - Node.js 20 或更高版本
 - npm 10 或更高版本
 - Windows、macOS 或 Linux 局域网主机
+- Python 3 与 Pillow（主题管理的谜面缩略图由服务端按需裁切、压缩）
 
 ## 安装
 
@@ -19,6 +20,8 @@ npm install --registry=https://registry.npmmirror.com
 ```
 
 若本机 npm 配置了已经失效的代理，请先修复代理配置；镜像地址仍保持为 `https://registry.npmmirror.com`。
+
+主题缩略图需要 Pillow：`python -m pip install Pillow`。如 Python 不在默认命令路径，可设置 `ARKFEETS_PYTHON` 为 Python 可执行文件路径。生成的 WebP 缓存在系统临时目录，不修改原图或题目文件。
 
 ## 配置
 

@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { basename, extname, join, posix, resolve, sep } from "node:path";
+import { dirname } from "node:path";
 import type { Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import AdmZip from "adm-zip";
 import { z } from "zod";
 import {
@@ -43,6 +49,10 @@ export class QuestionAdminService {
   private readonly fullDataDirectory: string;
   private readonly questionDataDirectory: string;
   private readonly questionTrashDirectory: string;
+  private readonly thumbnailDirectory: string;
+  private readonly thumbnailJobs = new Map<string, Promise<Buffer>>();
+  private thumbnailWorkers = 0;
+  private readonly thumbnailWaiters: Array<() => void> = [];
   // 题库文件解析结果缓存：key 为文件绝对路径，mtime/size 变化时才重新读盘。
   // 题库规模达到千级后，每次请求全量同步读盘 + zod 解析是读取变慢的根因。
   private readonly parsedFileCache = new Map<string, { mtimeMs: number; size: number; value: unknown }>();
@@ -52,9 +62,11 @@ export class QuestionAdminService {
     this.fullDataDirectory = join(resourceDirectory, "full_data");
     this.questionDataDirectory = join(resourceDirectory, "question_data");
     this.questionTrashDirectory = join(resourceDirectory, "question_trash");
+    this.thumbnailDirectory = join(tmpdir(), "arkfeets-topic-thumbnails");
     mkdirSync(this.fullDataDirectory, { recursive: true });
     mkdirSync(this.questionDataDirectory, { recursive: true });
     mkdirSync(this.questionTrashDirectory, { recursive: true });
+    mkdirSync(this.thumbnailDirectory, { recursive: true });
   }
 
   list() {
@@ -92,10 +104,69 @@ export class QuestionAdminService {
         tags: info?.tags ?? [],
         hint: info?.hint ?? "",
         originalImage: info?.originalImage ?? "",
-        originalImageUrl: info?.originalImage ? imageUrl(info.originalImage) : null,
-        crop: info?.question ?? null,
+        thumbnailUrl: info ? this.topicThumbnailUrl(entry.id, info) : null,
         enabled: info?.enabled ?? false,
       };
+    });
+  }
+
+  private topicThumbnailUrl(id: string, info: QuestionRecord): string | null {
+    const key = this.thumbnailKey(id, info);
+    return key ? `/api/admin/questions/${encodeURIComponent(id)}/thumbnail?v=${key}` : null;
+  }
+
+  private thumbnailKey(id: string, info: QuestionRecord): string | null {
+    if (!info.question || !info.originalImage || basename(info.originalImage) !== info.originalImage || !imageExtensions.has(extname(info.originalImage).toLowerCase())) return null;
+    const source = this.imagePath(info.originalImage);
+    if (!existsSync(source)) return null;
+    const image = statSync(source);
+    const record = statSync(this.questionPath(id));
+    return createHash("sha256").update(JSON.stringify([this.resourceDirectory, id, info.question, image.mtimeMs, image.size, record.mtimeMs, record.size])).digest("hex").slice(0, 24);
+  }
+
+  async getQuestionThumbnail(id: string): Promise<Buffer> {
+    if (!this.readCatalogue().some((entry) => entry.id === id)) throw new Error("题目不存在");
+    const info = this.readJsonCached(this.questionPath(id), (raw) => questionRecordSchema.parse(raw));
+    const key = this.thumbnailKey(id, info);
+    if (!key || !info.question) throw new Error("题目谜面不可用");
+    const cached = this.thumbnailJobs.get(key);
+    if (cached) return cached;
+    const job = this.withThumbnailSlot(async () => {
+      const target = join(this.thumbnailDirectory, `${key}.webp`);
+      if (!existsSync(target)) {
+        const temporary = join(this.thumbnailDirectory, `${key}.${process.pid}.${randomUUID()}.tmp`);
+        try {
+          await this.renderThumbnail(this.imagePath(info.originalImage), info.question!, temporary);
+          try { renameSync(temporary, target); }
+          catch (error) { if (existsSync(target)) rmSync(temporary, { force: true }); else throw error; }
+        } finally { rmSync(temporary, { force: true }); }
+      }
+      return readFile(target);
+    });
+    this.thumbnailJobs.set(key, job);
+    try { return await job; } finally { this.thumbnailJobs.delete(key); }
+  }
+
+  private async withThumbnailSlot<T>(task: () => Promise<T>): Promise<T> {
+    if (this.thumbnailWorkers >= 2) await new Promise<void>((resolve) => this.thumbnailWaiters.push(resolve));
+    else this.thumbnailWorkers += 1;
+    try { return await task(); }
+    finally {
+      const next = this.thumbnailWaiters.shift();
+      if (next) next();
+      else this.thumbnailWorkers -= 1;
+    }
+  }
+
+  private renderThumbnail(source: string, crop: NonNullable<QuestionRecord["question"]>, target: string): Promise<void> {
+    const script = join(dirname(fileURLToPath(import.meta.url)), "../../scripts/render_topic_thumbnail.py");
+    const executable = process.env.ARKFEETS_PYTHON || (process.platform === "win32" ? "python" : "python3");
+    return new Promise((resolve, reject) => {
+      const child = spawn(executable, [script, source, JSON.stringify(crop), target], { windowsHide: true });
+      let diagnostic = "";
+      child.stderr.on("data", (chunk: Buffer) => { diagnostic = (diagnostic + chunk.toString()).slice(-2000); });
+      child.once("error", reject);
+      child.once("close", (code) => code === 0 ? resolve() : reject(new Error(diagnostic.trim() || `缩略图生成失败 (${code})`)));
     });
   }
 

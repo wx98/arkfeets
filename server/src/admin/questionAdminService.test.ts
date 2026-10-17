@@ -123,10 +123,25 @@ describe("QuestionAdminService", () => {
     service.createQuestion({ ...validInput(["答案"], "new.png"), title: "新题", topic: [topic.id], tags: ["测试标签"], enabled: false });
     const previews = service.listTopicQuestions(topic.id);
     expect(previews).toHaveLength(1);
-    expect(previews[0]).toMatchObject({ id: "新题", title: "新题", tags: ["测试标签"], originalImageUrl: "/full-data/new.png" });
-    expect(previews[0].crop).toBeTruthy();
+    expect(previews[0]).toMatchObject({ id: "新题", title: "新题", tags: ["测试标签"], thumbnailUrl: expect.stringMatching(/^\/api\/admin\/questions\//) });
+    expect(JSON.stringify(previews)).not.toContain("/full-data/");
     expect(service.listTopicQuestions("脚").map((item) => item.id)).toEqual(["existing"]);
     expect(() => service.listTopicQuestions("不存在")).toThrow("主题不存在");
+  });
+
+  it("renders and caches a compact WebP from the question crop", async () => {
+    writeFileSync(join(rootDirectory, "full_data", "existing.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP4z8DAAMIM////ZwAAHu8E/KPItPcAAAAASUVORK5CYII=", "base64"));
+    const service = createService();
+    const first = await service.getQuestionThumbnail("existing");
+    expect(first.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(first.toString("ascii", 8, 12)).toBe("WEBP");
+    expect(first.length).toBeLessThan(20_000);
+    expect(await service.getQuestionThumbnail("existing")).toEqual(first);
+    await expect(service.getQuestionThumbnail("missing")).rejects.toThrow("题目不存在");
+    const oldUrl = service.listTopicQuestions("脚")[0].thumbnailUrl;
+    service.updateQuestion("existing", { ...validInput(["旧答案"]), title: "题目", question: { x: 100, y: 80, width: 100, height: 80, sourceWidth: 200, sourceHeight: 160 } });
+    expect(service.listTopicQuestions("脚")[0].thumbnailUrl).not.toBe(oldUrl);
+    expect(await service.getQuestionThumbnail("existing")).not.toEqual(first);
   });
 
   it("keeps a topic while a deleted question still references it", () => {

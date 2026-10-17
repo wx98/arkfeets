@@ -90,6 +90,16 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
   router.get("/library", (_request, response) => run(response, () => questions.list()));
   router.get("/topics", (_request, response) => run(response, () => questions.listTopics()));
   router.get("/topics/:id/questions", (request, response) => run(response, () => questions.listTopicQuestions(String(request.params.id))));
+  router.get("/questions/:id/thumbnail", async (request, response) => {
+    try {
+      const image = await questions.getQuestionThumbnail(String(request.params.id));
+      response.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+      response.type("webp").send(image);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "缩略图读取失败";
+      response.status(message.includes("不存在") || message.includes("不可用") ? 404 : 500).json({ message });
+    }
+  });
   router.post("/topics", (request, response) => run(response, () => questions.createTopic(z.string().parse(request.body?.name))));
   router.put("/topics/:id", (request, response) => run(response, () => questions.updateTopic(String(request.params.id), z.object({ name: z.string(), isDefault: z.boolean() }).strict().parse(request.body))));
   router.delete("/topics/:id", (request, response) => run(response, () => questions.deleteTopic(String(request.params.id))));

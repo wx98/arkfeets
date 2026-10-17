@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ImageOff, LayoutGrid, Search } from "lucide-vue-next";
-import type { CropRect } from "../types";
+import { LayoutGrid, Search } from "lucide-vue-next";
+import { useRouter } from "vue-router";
+import TopicQuestionThumbnail from "./TopicQuestionThumbnail.vue";
 
 export interface TopicQuestionPreview {
   id: string;
@@ -9,13 +10,12 @@ export interface TopicQuestionPreview {
   tags: string[];
   hint: string;
   originalImage: string;
-  originalImageUrl: string | null;
-  crop: CropRect | null;
+  thumbnailUrl: string | null;
   enabled: boolean;
 }
 
 const props = defineProps<{ questions: TopicQuestionPreview[]; loading: boolean; error: string }>();
-const emit = defineEmits<{ edit: [id: string] }>();
+const router = useRouter();
 type ViewMode = "extra" | "large" | "medium" | "small" | "list" | "details" | "tiles" | "content";
 const modes: { value: ViewMode; label: string }[] = [
   { value: "extra", label: "超大图标" }, { value: "large", label: "大图标" },
@@ -36,20 +36,7 @@ function changeMode(event: Event) {
   mode.value = (event.target as HTMLSelectElement).value as ViewMode;
   localStorage.setItem("arkfeets:topic-view", mode.value);
 }
-function cropStyle(crop: CropRect) {
-  return {
-    width: `${crop.sourceWidth / crop.width * 100}%`,
-    height: `${crop.sourceHeight / crop.height * 100}%`,
-    left: `${-crop.x / crop.width * 100}%`,
-    top: `${-crop.y / crop.height * 100}%`,
-  };
-}
-function cropWindowStyle(crop: CropRect) {
-  const ratio = crop.width / crop.height;
-  return ratio >= 1
-    ? { width: "100%", height: `${100 / ratio}%` }
-    : { width: `${ratio * 100}%`, height: "100%" };
-}
+function editUrl(id: string) { return router.resolve({ path: "/admin/questions", query: { question: id } }).href; }
 </script>
 
 <template>
@@ -65,18 +52,15 @@ function cropWindowStyle(crop: CropRect) {
       <p v-else-if="!filtered.length" class="topic-browser__empty">{{ search ? '没有匹配的题目' : '此主题暂无题目' }}</p>
       <div v-else :class="['topic-browser__items', `topic-browser__items--${mode}`]">
         <div v-if="mode === 'details'" class="topic-browser__columns" aria-hidden="true"><span>谜面 / 标题</span><span>标签</span><span>关联原图</span><span>状态</span></div>
-        <button v-for="question in filtered" :key="question.id" type="button" class="topic-browser__item" :title="`编辑 ${question.title}`" @click="emit('edit', question.id)">
+        <a v-for="question in filtered" :key="question.id" :href="editUrl(question.id)" target="_blank" rel="noopener noreferrer" class="topic-browser__item" :title="`在新标签页编辑 ${question.title}`">
           <span class="topic-browser__thumb">
-            <span v-if="question.crop && question.originalImageUrl" class="topic-browser__crop-window" :style="cropWindowStyle(question.crop)">
-              <img :src="question.originalImageUrl" :style="cropStyle(question.crop)" :alt="`${question.title}的谜面`" loading="lazy" />
-            </span>
-            <ImageOff v-else :size="20" aria-hidden="true" />
+            <TopicQuestionThumbnail :url="question.thumbnailUrl" :alt="`${question.title}的谜面`" />
           </span>
           <span class="topic-browser__copy"><strong>{{ question.title }}</strong><small v-if="mode === 'content'">{{ question.hint || '暂无提示' }}</small></span>
           <span class="topic-browser__tags">{{ question.tags.join(' · ') || '无标签' }}</span>
           <span class="topic-browser__source">{{ question.originalImage || '无原图' }}</span>
           <span class="topic-browser__status" :class="{ 'topic-browser__status--off': !question.enabled }">{{ question.enabled ? '已启用' : '未启用' }}</span>
-        </button>
+        </a>
       </div>
     </div>
   </section>
@@ -89,8 +73,8 @@ function cropWindowStyle(crop: CropRect) {
 .topic-browser__search, .topic-browser__mode { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid #b8c3b8; color: #58635a; background: #fff; }
 .topic-browser__search { width: min(280px, 38%); }.topic-browser__search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 12px; }.topic-browser__mode select { max-width: 115px; border: 0; outline: 0; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .topic-browser__body { min-height: 0; flex: 1; overflow: auto; padding: 16px 18px 26px; }.topic-browser__empty, .topic-browser__error { margin: 25px 0; color: #68736c; font-size: 13px; }.topic-browser__error { color: #a83f35; }
-.topic-browser__items { display: grid; align-content: start; gap: 10px; }.topic-browser__item { min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 7px; border: 1px solid transparent; color: #252d28; background: transparent; text-align: left; font: inherit; cursor: pointer; }.topic-browser__item:hover, .topic-browser__item:focus-visible { border-color: #a1b956; background: #eef5df; outline: 0; }
-.topic-browser__thumb { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; color: #7b847e; background-color: #fff; background-image: linear-gradient(45deg,#e5e9e5 25%,transparent 25%),linear-gradient(-45deg,#e5e9e5 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e5e9e5 75%),linear-gradient(-45deg,transparent 75%,#e5e9e5 75%); background-size: 18px 18px; background-position: 0 0,0 9px,9px -9px,-9px 0; }.topic-browser__crop-window { position: relative; display: block; overflow: hidden; }.topic-browser__thumb img { position: absolute; max-width: none; max-height: none; }
+.topic-browser__items { display: grid; align-content: start; gap: 10px; }.topic-browser__item { min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 7px; border: 1px solid transparent; color: #252d28; background: transparent; text-align: left; text-decoration: none; font: inherit; cursor: pointer; }.topic-browser__item:hover, .topic-browser__item:focus-visible { border-color: #a1b956; background: #eef5df; outline: 0; }
+.topic-browser__thumb { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; color: #7b847e; background-color: #fff; background-image: linear-gradient(45deg,#e5e9e5 25%,transparent 25%),linear-gradient(-45deg,#e5e9e5 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e5e9e5 75%),linear-gradient(-45deg,transparent 75%,#e5e9e5 75%); background-size: 18px 18px; background-position: 0 0,0 9px,9px -9px,-9px 0; }
 .topic-browser__copy { min-width: 0; }.topic-browser__copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }.topic-browser__copy small { display: block; margin-top: 4px; color: #68736c; font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.topic-browser__tags, .topic-browser__source, .topic-browser__status { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #68736c; font-size: 11px; }
 .topic-browser__items--extra { grid-template-columns: repeat(auto-fill,minmax(230px,1fr)); }.topic-browser__items--large { grid-template-columns: repeat(auto-fill,minmax(175px,1fr)); }.topic-browser__items--medium { grid-template-columns: repeat(auto-fill,minmax(125px,1fr)); }.topic-browser__items--small { grid-template-columns: repeat(auto-fill,minmax(88px,1fr)); }
 .topic-browser__items--list, .topic-browser__items--details { display: block; }.topic-browser__items--list .topic-browser__item, .topic-browser__items--details .topic-browser__item { width: 100%; min-height: 40px; flex-direction: row; align-items: center; gap: 10px; padding: 4px 8px; border-bottom: 1px solid #e1e6df; }.topic-browser__items--list .topic-browser__thumb, .topic-browser__items--details .topic-browser__thumb { width: 30px; height: 30px; flex: 0 0 30px; }.topic-browser__items--list .topic-browser__copy { flex: 1; }

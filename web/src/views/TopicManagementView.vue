@@ -54,7 +54,6 @@ async function choose(topic?: Topic) {
   }
 }
 
-function editQuestion(id: string) { void router.push({ path: "/admin/questions", query: { question: id } }); }
 
 onMounted(async () => {
   try {
@@ -158,7 +157,7 @@ async function deleteTopic() {
           <p v-if="message" class="topic-page__message" role="status">{{ message }}</p>
           <p v-if="error" class="topic-page__error" role="alert">{{ error }}</p>
         </div>
-        <TopicQuestionBrowser :questions="questions" :loading="questionsLoading" :error="questionsError" @edit="editQuestion" />
+        <TopicQuestionBrowser :questions="questions" :loading="questionsLoading" :error="questionsError" />
       </section>
       <section v-else class="topic-detail"><p v-if="error" class="topic-page__error" role="alert">{{ error }}</p></section>
     </div>

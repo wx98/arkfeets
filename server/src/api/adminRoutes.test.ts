@@ -14,6 +14,7 @@ describe("shared admin session", () => {
       list: () => ({ questions: [] }),
       listTopics: () => [{ id: "脚", name: "脚", isDefault: true, questionCount: 1 }],
       listTopicQuestions: (id: string) => [{ id: "test", title: "test", topicId: id }],
+      getQuestionThumbnail: async () => Buffer.from("RIFF....WEBP"),
     } as unknown as QuestionAdminService;
     const live = { snapshot: () => ({ users: [] }) } as unknown as BilibiliDanmakuBridge;
     const audit = { list: async () => ({ items: [], total: 0 }) } as unknown as GameAuditReader;
@@ -26,17 +27,20 @@ describe("shared admin session", () => {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("测试服务未启动");
       const base = `http://127.0.0.1:${address.port}/api/admin`;
-      for (const path of ["session", "library", "topics", "topics/%E8%84%9A/questions", "games", "live/state"]) {
+      for (const path of ["session", "library", "topics", "topics/%E8%84%9A/questions", "questions/test/thumbnail", "games", "live/state"]) {
         expect((await fetch(`${base}/${path}`)).status).toBe(401);
       }
       const login = await fetch(`${base}/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: "test-password" }) });
       expect(login.status).toBe(200);
       const cookie = login.headers.get("set-cookie")?.split(";")[0];
       expect(cookie).toMatch(/^arkfeets_admin=/);
-      for (const path of ["session", "library", "topics", "topics/%E8%84%9A/questions", "games", "live/state"]) {
+      for (const path of ["session", "library", "topics", "topics/%E8%84%9A/questions", "questions/test/thumbnail", "games", "live/state"]) {
         expect((await fetch(`${base}/${path}`, { headers: { Cookie: cookie! } })).status).toBe(200);
       }
       expect(await (await fetch(`${base}/topics/%E8%84%9A/questions`, { headers: { Cookie: cookie! } })).json()).toEqual([{ id: "test", title: "test", topicId: "脚" }]);
+      const thumbnail = await fetch(`${base}/questions/test/thumbnail`, { headers: { Cookie: cookie! } });
+      expect(thumbnail.headers.get("content-type")).toContain("image/webp");
+      expect(thumbnail.headers.get("content-length")).toBe("12");
       expect((await fetch(`${base}/logout`, { method: "POST", headers: { Cookie: cookie! } })).status).toBe(200);
       expect((await fetch(`${base}/session`, { headers: { Cookie: cookie! } })).status).toBe(401);
     } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }

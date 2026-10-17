@@ -29,12 +29,12 @@
   ],
   "originalImage": "泰拉大陆调查团 1.png",
   "question": {
-    "x": 1046,
-    "y": 734,
-    "width": 603,
-    "height": 470,
+    "x": 1231,
+    "y": 1733,
+    "width": 207,
+    "height": 226,
     "sourceWidth": 2048,
     "sourceHeight": 2048
   },
-  "enabled": false
+  "enabled": true
 }

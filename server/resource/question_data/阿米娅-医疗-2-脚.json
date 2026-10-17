@@ -1,0 +1,27 @@
+{
+  "id": "阿米娅-医疗-2-脚",
+  "title": "阿米娅(医疗) 2-脚",
+  "answers": [
+    "阿米娅(医疗)",
+    "阿米娅(医疗)精二",
+    "阿米娅"
+  ],
+  "hint": "以医疗身份行动的罗德岛领袖，外表年幼的感染者少女",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [],
+  "originalImage": "阿米娅(医疗) 2.png",
+  "question": {
+    "x": 1094,
+    "y": 1516,
+    "width": 183,
+    "height": 279,
+    "sourceWidth": 2560,
+    "sourceHeight": 2560
+  },
+  "enabled": true
+}

@@ -1,0 +1,34 @@
+{
+  "id": "Friston-3-1-脚",
+  "title": "Friston-3 1-脚",
+  "answers": [
+    "Friston-3",
+    "Friston-3精一"
+  ],
+  "hint": "罗德岛首台全自研作业平台，知识渊博脾气古怪",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:1星",
+    "职业:重装",
+    "分支:铁卫",
+    "位置:近战位",
+    "性别:男",
+    "获取途径:公开招募 活动获得",
+    "上线时间:2023-05-22 16:00"
+  ],
+  "originalImage": "Friston-3 1.png",
+  "question": {
+    "x": 287,
+    "y": 1435,
+    "width": 324,
+    "height": 317,
+    "sourceWidth": 2048,
+    "sourceHeight": 2048
+  },
+  "enabled": true
+}

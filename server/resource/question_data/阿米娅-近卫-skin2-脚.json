@@ -1,0 +1,27 @@
+{
+  "id": "阿米娅-近卫-skin2-脚",
+  "title": "阿米娅(近卫) skin2-脚",
+  "answers": [
+    "阿米娅(近卫)",
+    "阿米娅(近卫)皮肤",
+    "阿米娅"
+  ],
+  "hint": "升变后执起青色怒火之剑的罗德岛领袖，感染者少女",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [],
+  "originalImage": "阿米娅(近卫) skin2.png",
+  "question": {
+    "x": 1222,
+    "y": 1203,
+    "width": 185,
+    "height": 294,
+    "sourceWidth": 2560,
+    "sourceHeight": 2560
+  },
+  "enabled": true
+}

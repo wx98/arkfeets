@@ -1,0 +1,34 @@
+{
+  "id": "PhonoR-0-skin1-脚",
+  "title": "PhonoR-0 skin1-脚",
+  "answers": [
+    "PhonoR-0",
+    "PhonoR-0皮肤"
+  ],
+  "hint": "罗德岛唯一搭载女妖咒言法器的巫术作业平台",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:1星",
+    "职业:辅助",
+    "分支:巫役",
+    "位置:远程位",
+    "性别:女",
+    "获取途径:公开招募 活动获得",
+    "上线时间:2024-05-01 16:00"
+  ],
+  "originalImage": "PhonoR-0 skin1.png",
+  "question": {
+    "x": 373,
+    "y": 1380,
+    "width": 510,
+    "height": 608,
+    "sourceWidth": 2048,
+    "sourceHeight": 2048
+  },
+  "enabled": true
+}

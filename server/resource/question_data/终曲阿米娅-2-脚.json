@@ -1,0 +1,27 @@
+{
+  "id": "终曲阿米娅-2-脚",
+  "title": "终曲阿米娅 2-脚",
+  "answers": [
+    "终曲阿米娅",
+    "终曲阿米娅精二",
+    "阿米娅"
+  ],
+  "hint": "",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [],
+  "originalImage": "终曲阿米娅 2.png",
+  "question": {
+    "x": 786,
+    "y": 93,
+    "width": 367,
+    "height": 359,
+    "sourceWidth": 1600,
+    "sourceHeight": 900
+  },
+  "enabled": true
+}

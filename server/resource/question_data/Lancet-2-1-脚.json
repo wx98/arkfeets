@@ -1,0 +1,34 @@
+{
+  "id": "Lancet-2-1-脚",
+  "title": "Lancet-2 1-脚",
+  "answers": [
+    "Lancet-2",
+    "Lancet-2精一"
+  ],
+  "hint": "性格消极的医疗小车，罗德岛的圆滚滚吉祥物",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:1星",
+    "职业:医疗",
+    "分支:医师",
+    "位置:远程位",
+    "性别:女",
+    "获取途径:公开招募 主线剧情",
+    "上线时间:2019-04-30 10:00"
+  ],
+  "originalImage": "Lancet-2 1.png",
+  "question": {
+    "x": 250,
+    "y": 787,
+    "width": 240,
+    "height": 224,
+    "sourceWidth": 1024,
+    "sourceHeight": 1024
+  },
+  "enabled": true
+}

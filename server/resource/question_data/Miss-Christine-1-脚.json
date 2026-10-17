@@ -1,0 +1,43 @@
+{
+  "id": "Miss-Christine-1-脚",
+  "title": "Miss.Christine 1-脚",
+  "answers": [
+    "Miss.Christine",
+    "Miss.Christine精一"
+  ],
+  "hint": "常伴傀影身边的神秘黑猫，疑似兽主之一",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:5星",
+    "职业:术师",
+    "分支:本源术师",
+    "位置:远程位",
+    "性别:女士",
+    "获取途径:活动获得",
+    "出身地:未知",
+    "种族:未公开",
+    "生日:未知",
+    "身高:35cm（蹲坐时）75cm左右（伸懒腰时干员目测",
+    "含尾巴）",
+    "战斗经验:未知",
+    "是否感染者:造影仪器无法对女士成功造影",
+    "也无法获取Miss.Christine的血液样本",
+    "华法琳最终决定放弃对Miss.Christine的感染情况检测。",
+    "上线时间:2025-06-05 16:00"
+  ],
+  "originalImage": "Miss.Christine 1.png",
+  "question": {
+    "x": 617,
+    "y": 769,
+    "width": 70,
+    "height": 146,
+    "sourceWidth": 1152,
+    "sourceHeight": 1152
+  },
+  "enabled": true
+}

@@ -1,0 +1,25 @@
+{
+  "id": "召唤物-Mon3tr-skin1-脚",
+  "title": "召唤物 Mon3tr skin1-脚",
+  "answers": [
+    "召唤物"
+  ],
+  "hint": "",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [],
+  "originalImage": "召唤物 Mon3tr skin1.png",
+  "question": {
+    "x": 168,
+    "y": 495,
+    "width": 288,
+    "height": 228,
+    "sourceWidth": 1024,
+    "sourceHeight": 1024
+  },
+  "enabled": true
+}

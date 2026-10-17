@@ -1,0 +1,40 @@
+{
+  "id": "U-Official-1-脚",
+  "title": "U-Official 1-脚",
+  "answers": [
+    "U-Official",
+    "U-Official精一"
+  ],
+  "hint": "足不出户的网络主播，经卡达介绍加入罗德岛",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:1星",
+    "职业:辅助",
+    "分支:吟游者",
+    "位置:远程位",
+    "性别:女",
+    "获取途径:活动获得",
+    "出身地:未公开",
+    "种族:札拉克",
+    "生日:1月4日",
+    "身高:159cm",
+    "战斗经验:少于一年",
+    "是否感染者:非感染者",
+    "上线时间:2023-04-01 16:00"
+  ],
+  "originalImage": "U-Official 1.png",
+  "question": {
+    "x": 1347,
+    "y": 1729,
+    "width": 270,
+    "height": 268,
+    "sourceWidth": 2048,
+    "sourceHeight": 2048
+  },
+  "enabled": true
+}

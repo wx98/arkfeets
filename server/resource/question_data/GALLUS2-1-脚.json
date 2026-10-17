@@ -1,0 +1,33 @@
+{
+  "id": "GALLUS2-1-脚",
+  "title": "GALLUS² 1-脚",
+  "answers": [
+    "GALLUS²",
+    "GALLUS²精一"
+  ],
+  "hint": "石棺诞生的玻璃铁皮鸡，带着万年记忆的历史顾问",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:1星",
+    "职业:术师",
+    "分支:中坚术师",
+    "位置:远程位",
+    "获取途径:公开招募 活动获得",
+    "上线时间:2026-05-01 12:00"
+  ],
+  "originalImage": "GALLUS² 1.png",
+  "question": {
+    "x": 236,
+    "y": 792,
+    "width": 212,
+    "height": 194,
+    "sourceWidth": 1024,
+    "sourceHeight": 1024
+  },
+  "enabled": true
+}

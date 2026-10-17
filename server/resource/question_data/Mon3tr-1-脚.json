@@ -1,0 +1,40 @@
+{
+  "id": "Mon3tr-1-脚",
+  "title": "Mon3tr 1-脚",
+  "answers": [
+    "Mon3tr",
+    "Mon3tr精一"
+  ],
+  "hint": "继承凯尔希记忆的机械生命，罗德岛特别顾问",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:6星",
+    "职业:医疗",
+    "分支:链愈师",
+    "位置:远程位",
+    "性别:女",
+    "获取途径:标准寻访",
+    "出身地:罗德岛",
+    "种族:未公开",
+    "生日:7月25日",
+    "身高:158cm",
+    "战斗经验:未公开",
+    "是否感染者:非感染者",
+    "上线时间:2025-04-07 16:00"
+  ],
+  "originalImage": "Mon3tr 1.png",
+  "question": {
+    "x": 467,
+    "y": 935,
+    "width": 139,
+    "height": 357,
+    "sourceWidth": 1292,
+    "sourceHeight": 1292
+  },
+  "enabled": true
+}

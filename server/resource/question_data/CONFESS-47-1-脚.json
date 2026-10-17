@@ -1,0 +1,34 @@
+{
+  "id": "CONFESS-47-1-脚",
+  "title": "CONFESS-47 1-脚",
+  "answers": [
+    "CONFESS-47",
+    "CONFESS-47精一"
+  ],
+  "hint": "拉特兰教皇厅送的自律告解车，爱讲冷笑话",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [
+    "星级:1星",
+    "职业:先锋",
+    "分支:尖兵",
+    "位置:近战位",
+    "性别:未知",
+    "获取途径:公开招募 活动获得",
+    "上线时间:2025-05-01 16:00"
+  ],
+  "originalImage": "CONFESS-47 1.png",
+  "question": {
+    "x": 1670,
+    "y": 1437,
+    "width": 363,
+    "height": 430,
+    "sourceWidth": 2048,
+    "sourceHeight": 2048
+  },
+  "enabled": true
+}

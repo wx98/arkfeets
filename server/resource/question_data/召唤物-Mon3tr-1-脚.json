@@ -1,0 +1,25 @@
+{
+  "id": "召唤物-Mon3tr-1-脚",
+  "title": "召唤物 Mon3tr 1-脚",
+  "answers": [
+    "召唤物"
+  ],
+  "hint": "",
+  "difficulty": [
+    "simple",
+    "medium",
+    "hard",
+    "hell"
+  ],
+  "tags": [],
+  "originalImage": "召唤物 Mon3tr 1.png",
+  "question": {
+    "x": 0,
+    "y": 171,
+    "width": 398,
+    "height": 207,
+    "sourceWidth": 1024,
+    "sourceHeight": 1024
+  },
+  "enabled": true
+}

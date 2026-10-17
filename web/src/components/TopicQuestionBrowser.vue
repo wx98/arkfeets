@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { LayoutGrid, Search } from "lucide-vue-next";
 import { useRouter } from "vue-router";
 import TopicQuestionThumbnail from "./TopicQuestionThumbnail.vue";
@@ -26,6 +26,23 @@ const modes: { value: ViewMode; label: string }[] = [
 const search = ref("");
 const storedMode = localStorage.getItem("arkfeets:topic-view");
 const mode = ref<ViewMode>(modes.some((item) => item.value === storedMode) ? storedMode as ViewMode : "medium");
+const thumbnailUrls = reactive(new Map<string, string>());
+const hoveredQuestion = ref<TopicQuestionPreview | null>(null);
+const pointer = ref({ x: 0, y: 0 });
+const hoverImageUrl = computed(() => hoveredQuestion.value ? thumbnailUrls.get(hoveredQuestion.value.id) : undefined);
+const hoverStyle = computed(() => {
+  const gutter = 12;
+  const offset = 18;
+  const width = Math.min(320, window.innerWidth - gutter * 2);
+  const height = Math.min(260, window.innerHeight - gutter * 2);
+  const right = pointer.value.x + offset;
+  const left = right + width <= window.innerWidth - gutter ? right : pointer.value.x - width - offset;
+  return {
+    width: `${width}px`, height: `${height}px`,
+    left: `${Math.max(gutter, Math.min(left, window.innerWidth - width - gutter))}px`,
+    top: `${Math.max(gutter, Math.min(pointer.value.y - height / 2, window.innerHeight - height - gutter))}px`,
+  };
+});
 const filtered = computed(() => {
   const needle = normalize(search.value);
   return needle ? props.questions.filter((question) => normalize([question.title, ...question.tags].join(" ")).includes(needle)) : props.questions;
@@ -37,6 +54,15 @@ function changeMode(event: Event) {
   localStorage.setItem("arkfeets:topic-view", mode.value);
 }
 function editUrl(id: string) { return router.resolve({ path: "/admin/questions", query: { question: id } }).href; }
+function setThumbnail(id: string, url: string) { thumbnailUrls.set(id, url); }
+function clearThumbnail(id: string) { thumbnailUrls.delete(id); }
+function movePreview(event: MouseEvent) { pointer.value = { x: event.clientX, y: event.clientY }; }
+function showPreview(question: TopicQuestionPreview, event: MouseEvent) {
+  hoveredQuestion.value = question;
+  movePreview(event);
+}
+function hidePreview() { hoveredQuestion.value = null; }
+watch([() => props.questions, search, mode], hidePreview);
 </script>
 
 <template>
@@ -46,15 +72,15 @@ function editUrl(id: string) { return router.resolve({ path: "/admin/questions",
       <label class="topic-browser__search"><Search :size="16" /><input v-model="search" type="search" placeholder="搜索题目名称或标签" aria-label="搜索题目名称或标签" /></label>
       <label class="topic-browser__mode"><LayoutGrid :size="16" /><select :value="mode" aria-label="题目视图" @change="changeMode"><option v-for="item in modes" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
     </header>
-    <div class="topic-browser__body">
+    <div class="topic-browser__body" @scroll.passive="hidePreview">
       <p v-if="loading" class="topic-browser__empty">正在读取题目...</p>
       <p v-else-if="error" class="topic-browser__error" role="alert">{{ error }}</p>
       <p v-else-if="!filtered.length" class="topic-browser__empty">{{ search ? '没有匹配的题目' : '此主题暂无题目' }}</p>
       <div v-else :class="['topic-browser__items', `topic-browser__items--${mode}`]">
         <div v-if="mode === 'details'" class="topic-browser__columns" aria-hidden="true"><span>谜面 / 标题</span><span>标签</span><span>关联原图</span><span>状态</span></div>
-        <a v-for="question in filtered" :key="question.id" :href="editUrl(question.id)" target="_blank" rel="noopener noreferrer" class="topic-browser__item" :title="`在新标签页编辑 ${question.title}`">
+        <a v-for="question in filtered" :key="question.id" :href="editUrl(question.id)" target="_blank" rel="noopener noreferrer" class="topic-browser__item" :aria-label="`在新标签页编辑 ${question.title}`" @mouseenter="showPreview(question, $event)" @mousemove="movePreview" @mouseleave="hidePreview">
           <span class="topic-browser__thumb">
-            <TopicQuestionThumbnail :url="question.thumbnailUrl" :alt="`${question.title}的谜面`" />
+            <TopicQuestionThumbnail :url="question.thumbnailUrl" :alt="`${question.title}的谜面`" @ready="setThumbnail(question.id, $event)" @clear="clearThumbnail(question.id)" />
           </span>
           <span class="topic-browser__copy"><strong>{{ question.title }}</strong><small v-if="mode === 'content'">{{ question.hint || '暂无提示' }}</small></span>
           <span class="topic-browser__tags">{{ question.tags.join(' · ') || '无标签' }}</span>
@@ -63,6 +89,11 @@ function editUrl(id: string) { return router.resolve({ path: "/admin/questions",
         </a>
       </div>
     </div>
+    <Teleport to="body">
+      <div v-if="hoveredQuestion && hoverImageUrl" class="topic-browser-preview" :style="hoverStyle" role="img" :aria-label="`${hoveredQuestion.title}的谜面预览`">
+        <img :src="hoverImageUrl" alt="" />
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -82,5 +113,8 @@ function editUrl(id: string) { return router.resolve({ path: "/admin/questions",
 .topic-browser__items--tiles { grid-template-columns: repeat(auto-fill,minmax(240px,1fr)); }.topic-browser__items--tiles .topic-browser__item, .topic-browser__items--content .topic-browser__item { flex-direction: row; align-items: center; gap: 12px; }.topic-browser__items--tiles .topic-browser__thumb { width: 78px; flex: 0 0 78px; }.topic-browser__items--tiles .topic-browser__copy, .topic-browser__items--content .topic-browser__copy { flex: 1; }.topic-browser__items--tiles .topic-browser__tags { display: block; max-width: 95px; }
 .topic-browser__items--content { grid-template-columns: repeat(auto-fill,minmax(310px,1fr)); }.topic-browser__items--content .topic-browser__item { padding: 10px; border-bottom: 1px solid #d9e0d8; }.topic-browser__items--content .topic-browser__thumb { width: 120px; flex: 0 0 120px; }.topic-browser__items--content .topic-browser__tags { display: block; max-width: 120px; }
 .topic-browser__status--off { color: #a36c4a; }
+.topic-browser-preview { position: fixed; z-index: 100; display: grid; place-items: center; overflow: hidden; border: 3px solid var(--signal); background-color: #f2f4f3; background-image: conic-gradient(#d5d9d7 25%, #f2f4f3 0 50%, #d5d9d7 0 75%, #f2f4f3 0); background-size: 18px 18px; box-shadow: 8px 8px 0 rgba(0,0,0,.35); pointer-events: none; }
+.topic-browser-preview img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+@media (hover: none) { .topic-browser-preview { display: none; } }
 @media (max-width: 740px) { .topic-browser__toolbar { flex-wrap: wrap; }.topic-browser__title { width: 100%; }.topic-browser__search { flex: 1; width: auto; }.topic-browser__columns, .topic-browser__items--details .topic-browser__item { grid-template-columns: minmax(110px,2fr) minmax(80px,1fr) 55px; }.topic-browser__columns span:nth-child(3), .topic-browser__items--details .topic-browser__source { display: none; }.topic-browser__items--details .topic-browser__status { display: block; } }
 </style>

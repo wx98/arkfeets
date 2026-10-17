@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ImageOff } from "lucide-vue-next";
 
 const props = defineProps<{ url: string | null; alt: string }>();
+const emit = defineEmits<{ ready: [url: string]; clear: [] }>();
 const root = ref<HTMLElement>();
 const imageUrl = ref("");
 const progress = ref<number | null>(null);
@@ -12,6 +13,7 @@ let request: XMLHttpRequest | undefined;
 let objectUrl = "";
 
 function stop() {
+  emit("clear");
   observer?.disconnect();
   observer = undefined;
   request?.abort();
@@ -39,6 +41,7 @@ function load() {
     if (xhr.status !== 200) { state.value = "error"; return; }
     objectUrl = URL.createObjectURL(xhr.response as Blob);
     imageUrl.value = objectUrl;
+    emit("ready", objectUrl);
     progress.value = 100;
   };
   xhr.onerror = () => { if (request === xhr) { request = undefined; state.value = "error"; } };
@@ -55,6 +58,7 @@ function observe() {
 }
 
 function imageFailed() {
+  emit("clear");
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = "";
   imageUrl.value = "";

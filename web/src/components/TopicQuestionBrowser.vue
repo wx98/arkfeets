@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { LayoutGrid, Search } from "lucide-vue-next";
 import { useRouter } from "vue-router";
 import type { CropRect } from "../types";
@@ -28,20 +28,16 @@ const modes: { value: ViewMode; label: string }[] = [
 const search = ref("");
 const storedMode = localStorage.getItem("arkfeets:topic-view");
 const mode = ref<ViewMode>(modes.some((item) => item.value === storedMode) ? storedMode as ViewMode : "medium");
+const thumbnails = reactive(new Map<string, { url: string; aspect: number }>());
 const hoveredQuestion = ref<TopicQuestionPreview | null>(null);
 const pointer = ref({ x: 0, y: 0 });
-const hoverImageUrl = ref("");
-const hoverLoading = ref(false);
-const hoverAspect = ref<number | null>(null);
-let hoverRequest: AbortController | undefined;
-let hoverTimer: ReturnType<typeof setTimeout> | undefined;
-let hoverObjectUrl = "";
+const hoverImage = computed(() => hoveredQuestion.value ? thumbnails.get(hoveredQuestion.value.id) : undefined);
 const hoverStyle = computed(() => {
   const gutter = 12;
   const offset = 18;
   const border = 6;
   const crop = hoveredQuestion.value?.question;
-  const aspect = hoverAspect.value ?? (crop ? crop.width / crop.height : 320 / 260);
+  const aspect = hoverImage.value?.aspect ?? (crop ? crop.width / crop.height : 320 / 260);
   const contentWidth = Math.min(320, window.innerWidth - gutter * 2 - border, (window.innerHeight - gutter * 2 - border) * aspect);
   const width = contentWidth + border;
   const height = contentWidth / aspect + border;
@@ -64,65 +60,15 @@ function changeMode(event: Event) {
   localStorage.setItem("arkfeets:topic-view", mode.value);
 }
 function editUrl(id: string) { return router.resolve({ path: "/admin/questions", query: { question: id } }).href; }
+function setThumbnail(id: string, image: { url: string; aspect: number }) { thumbnails.set(id, image); }
+function clearThumbnail(id: string) { thumbnails.delete(id); }
 function movePreview(event: MouseEvent) { pointer.value = { x: event.clientX, y: event.clientY }; }
 function showPreview(question: TopicQuestionPreview, event: MouseEvent) {
-  hidePreview();
-  if (!question.question || !question.originalImage) return;
+  if (!question.thumbnailUrl) return;
   hoveredQuestion.value = question;
   movePreview(event);
-  hoverLoading.value = true;
-  hoverTimer = setTimeout(() => { void loadPreview(question); }, 100);
-}
-async function loadPreview(question: TopicQuestionPreview) {
-  if (!question.question) return;
-  const request = new AbortController();
-  hoverRequest = request;
-  try {
-    const response = await fetch(`/full-data/${encodeURIComponent(question.originalImage)}`, { signal: request.signal });
-    if (!response.ok) throw new Error("原图读取失败");
-    const bitmap = await createImageBitmap(await response.blob());
-    try {
-      if (request.signal.aborted) return;
-      const crop = question.question;
-      const scaleX = bitmap.width / crop.sourceWidth;
-      const scaleY = bitmap.height / crop.sourceHeight;
-      const left = Math.max(0, Math.min(bitmap.width - 1, Math.round(crop.x * scaleX)));
-      const top = Math.max(0, Math.min(bitmap.height - 1, Math.round(crop.y * scaleY)));
-      const right = Math.max(left + 1, Math.min(bitmap.width, Math.round((crop.x + crop.width) * scaleX)));
-      const bottom = Math.max(top + 1, Math.min(bitmap.height, Math.round((crop.y + crop.height) * scaleY)));
-      const canvas = document.createElement("canvas");
-      canvas.width = right - left;
-      canvas.height = bottom - top;
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("无法绘制谜面");
-      context.drawImage(bitmap, left, top, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
-      const image = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("无法生成谜面")), "image/png"));
-      if (request.signal.aborted) return;
-      hoverAspect.value = canvas.width / canvas.height;
-      hoverObjectUrl = URL.createObjectURL(image);
-      hoverImageUrl.value = hoverObjectUrl;
-    } finally {
-      bitmap.close();
-    }
-  } catch {
-    // A newer hover may abort this request; only the active preview reports failure.
-  } finally {
-    if (hoverRequest === request) {
-      hoverRequest = undefined;
-      hoverLoading.value = false;
-    }
-  }
 }
 function hidePreview() {
-  clearTimeout(hoverTimer);
-  hoverTimer = undefined;
-  hoverRequest?.abort();
-  hoverRequest = undefined;
-  if (hoverObjectUrl) URL.revokeObjectURL(hoverObjectUrl);
-  hoverObjectUrl = "";
-  hoverImageUrl.value = "";
-  hoverLoading.value = false;
-  hoverAspect.value = null;
   hoveredQuestion.value = null;
 }
 watch([() => props.questions, search, mode], hidePreview);
@@ -144,7 +90,7 @@ onBeforeUnmount(hidePreview);
         <div v-if="mode === 'details'" class="topic-browser__columns" aria-hidden="true"><span>谜面 / 标题</span><span>标签</span><span>关联原图</span><span>状态</span></div>
         <a v-for="question in filtered" :key="question.id" :href="editUrl(question.id)" target="_blank" rel="noopener noreferrer" class="topic-browser__item" :aria-label="`在新标签页编辑 ${question.title}`" @mouseenter="showPreview(question, $event)" @mousemove="movePreview" @mouseleave="hidePreview">
           <span class="topic-browser__thumb">
-            <TopicQuestionThumbnail :url="question.thumbnailUrl" :alt="`${question.title}的谜面`" />
+            <TopicQuestionThumbnail :url="question.thumbnailUrl" :alt="`${question.title}的谜面`" @ready="setThumbnail(question.id, $event)" @clear="clearThumbnail(question.id)" />
           </span>
           <span class="topic-browser__copy"><strong>{{ question.title }}</strong><small v-if="mode === 'content'">{{ question.hint || '暂无提示' }}</small></span>
           <span class="topic-browser__tags">{{ question.tags.join(' · ') || '无标签' }}</span>
@@ -154,9 +100,8 @@ onBeforeUnmount(hidePreview);
       </div>
     </div>
     <Teleport to="body">
-      <div v-if="hoveredQuestion" class="topic-browser-preview" :style="hoverStyle" role="img" :aria-label="`${hoveredQuestion.title}的谜面预览`">
-        <img v-if="hoverImageUrl" :src="hoverImageUrl" alt="" />
-        <span v-else class="topic-browser-preview__state">{{ hoverLoading ? '正在加载高清谜面...' : '预览不可用' }}</span>
+      <div v-if="hoveredQuestion && hoverImage" class="topic-browser-preview" :style="hoverStyle" role="img" :aria-label="`${hoveredQuestion.title}的谜面预览`">
+        <img :src="hoverImage.url" alt="" />
       </div>
     </Teleport>
   </section>
@@ -180,7 +125,6 @@ onBeforeUnmount(hidePreview);
 .topic-browser__status--off { color: #a36c4a; }
 .topic-browser-preview { position: fixed; z-index: 100; display: grid; place-items: center; overflow: hidden; border: 3px solid var(--signal); background-color: #f2f4f3; background-image: conic-gradient(#d5d9d7 25%, #f2f4f3 0 50%, #d5d9d7 0 75%, #f2f4f3 0); background-size: 18px 18px; box-shadow: 8px 8px 0 rgba(0,0,0,.35); pointer-events: none; }
 .topic-browser-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.topic-browser-preview__state { color: #425044; font-size: 12px; }
 @media (hover: none) { .topic-browser-preview { display: none; } }
 @media (max-width: 740px) { .topic-browser__toolbar { flex-wrap: wrap; }.topic-browser__title { width: 100%; }.topic-browser__search { flex: 1; width: auto; }.topic-browser__columns, .topic-browser__items--details .topic-browser__item { grid-template-columns: minmax(110px,2fr) minmax(80px,1fr) 55px; }.topic-browser__columns span:nth-child(3), .topic-browser__items--details .topic-browser__source { display: none; }.topic-browser__items--details .topic-browser__status { display: block; } }
 </style>

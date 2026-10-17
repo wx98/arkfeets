@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ImageOff } from "lucide-vue-next";
 
 const props = defineProps<{ url: string | null; alt: string }>();
+const emit = defineEmits<{ ready: [image: { url: string; aspect: number }]; clear: [] }>();
 const root = ref<HTMLElement>();
 const imageUrl = ref("");
 const progress = ref<number | null>(null);
@@ -12,6 +13,7 @@ let request: XMLHttpRequest | undefined;
 let objectUrl = "";
 
 function stop() {
+  emit("clear");
   observer?.disconnect();
   observer = undefined;
   request?.abort();
@@ -55,6 +57,7 @@ function observe() {
 }
 
 function imageFailed() {
+  emit("clear");
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = "";
   imageUrl.value = "";
@@ -64,11 +67,16 @@ function imageFailed() {
 onMounted(observe);
 watch(() => props.url, () => { stop(); observe(); });
 onBeforeUnmount(stop);
+function imageReady(event: Event) {
+  state.value = "ready";
+  const image = event.target as HTMLImageElement;
+  emit("ready", { url: imageUrl.value, aspect: image.naturalWidth / image.naturalHeight });
+}
 </script>
 
 <template>
   <span ref="root" class="topic-thumbnail">
-    <img v-if="imageUrl" :src="imageUrl" :alt="alt" loading="lazy" @load="state = 'ready'" @error="imageFailed" />
+    <img v-if="imageUrl" :src="imageUrl" :alt="alt" loading="lazy" @load="imageReady" @error="imageFailed" />
     <span v-if="state === 'loading'" class="topic-thumbnail__loading" role="progressbar" :aria-label="`加载 ${alt}`" :aria-valuenow="progress ?? undefined" aria-valuemin="0" aria-valuemax="100">
       <svg viewBox="0 0 40 40" aria-hidden="true"><circle class="topic-thumbnail__track" cx="20" cy="20" r="16" /><circle class="topic-thumbnail__arc" :class="{ 'topic-thumbnail__arc--pending': progress === null }" cx="20" cy="20" r="16" :style="{ strokeDashoffset: progress === null ? 72 : 100 - progress }" /></svg>
       <small>{{ progress === null ? '···' : `${progress}%` }}</small>

@@ -122,7 +122,7 @@ export class QuestionAdminService {
     if (!existsSync(source)) return null;
     const image = statSync(source);
     const record = statSync(this.questionPath(id));
-    return createHash("sha256").update(JSON.stringify([this.resourceDirectory, id, info.question, image.mtimeMs, image.size, record.mtimeMs, record.size])).digest("hex").slice(0, 24);
+    return createHash("sha256").update(JSON.stringify(["precise-crop-v2", this.resourceDirectory, id, info.question, image.mtimeMs, image.size, record.mtimeMs, record.size])).digest("hex").slice(0, 24);
   }
 
   async getQuestionThumbnail(id: string): Promise<Buffer> {

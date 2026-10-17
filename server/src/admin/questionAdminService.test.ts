@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -142,6 +143,19 @@ describe("QuestionAdminService", () => {
     service.updateQuestion("existing", { ...validInput(["旧答案"]), title: "题目", question: { x: 100, y: 80, width: 100, height: 80, sourceWidth: 200, sourceHeight: 160 } });
     expect(service.listTopicQuestions("脚")[0].thumbnailUrl).not.toBe(oldUrl);
     expect(await service.getQuestionThumbnail("existing")).not.toEqual(first);
+  });
+
+  it("keeps fractional crop edges instead of rounding the source rectangle", async () => {
+    writeFileSync(join(rootDirectory, "full_data", "existing.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP4z8DAAMIM////ZwAAHu8E/KPItPcAAAAASUVORK5CYII=", "base64"));
+    const service = createService();
+    service.updateQuestion("existing", {
+      ...validInput(["答案"]), enabled: false,
+      question: { x: 0.49, y: 0.49, width: 1.02, height: 1.02, sourceWidth: 2, sourceHeight: 2 },
+    });
+    const thumbnail = await service.getQuestionThumbnail("existing");
+    const python = process.env.ARKFEETS_PYTHON || (process.platform === "win32" ? "python" : "python3");
+    const dimensions = execFileSync(python, ["-c", "from PIL import Image; from io import BytesIO; import json,sys; print(json.dumps(Image.open(BytesIO(sys.stdin.buffer.read())).size))"], { input: thumbnail });
+    expect(JSON.parse(dimensions.toString())).toEqual([1, 1]);
   });
 
   it("keeps a topic while a deleted question still references it", () => {

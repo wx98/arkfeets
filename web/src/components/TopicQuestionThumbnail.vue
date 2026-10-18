@@ -19,7 +19,7 @@ function thumbnailObserver() {
   return sharedObserver;
 }
 
-const props = defineProps<{ url: string | null; alt: string }>();
+const props = defineProps<{ url: string | null; alt: string; retryToken?: number }>();
 const emit = defineEmits<{ ready: [image: { url: string; aspect: number }]; clear: [] }>();
 const root = ref<HTMLElement>();
 const imageUrl = ref("");
@@ -94,6 +94,7 @@ function imageFailed() {
 
 onMounted(observe);
 watch(() => props.url, () => { stop(); observe(); });
+watch(() => props.retryToken, () => { if (state.value === "error") { stop(); observe(); } });
 onBeforeUnmount(stop);
 function imageReady(event: Event) {
   state.value = "ready";

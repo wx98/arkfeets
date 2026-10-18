@@ -5,8 +5,8 @@ import { useRouter } from "vue-router";
 import TopicQuestionBrowser, { type TopicQuestionPreview } from "../components/TopicQuestionBrowser.vue";
 
 interface Topic { id: string; name: string; isDefault: boolean; questionCount: number }
-interface ThumbnailProgress { total: number; ready: number; failed: number }
-interface ThumbnailRefreshStatus { state: "idle" | "running" | "completed" | "failed"; total: number; processed: number; failed: number; revision: number; error?: string }
+interface ThumbnailProgress { total: number; ready: number; failed: number; processing: number }
+interface ThumbnailRefreshStatus { state: "idle" | "running" | "completed" | "failed"; total: number; processed: number; failed: number; processing: number; error?: string }
 const router = useRouter();
 const checking = ref(true);
 const authenticated = ref(false);
@@ -27,7 +27,7 @@ const refreshBusy = ref(false);
 let questionRequest = 0;
 let progressTimer: ReturnType<typeof setInterval> | undefined;
 let refreshStream: EventSource | undefined;
-let lastAppliedRevision = 0;
+const thumbnailRetryToken = ref(0);
 const selected = computed(() => topics.value.find((topic) => topic.id === selectedId.value));
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -60,7 +60,7 @@ async function choose(topic?: Topic) {
     if (requestId === questionRequest) {
       questions.value = result;
       const progress = await refreshThumbnailProgress(topic.id, requestId);
-      if (progress && progress.ready + progress.failed < progress.total) {
+       if (progress && (progress.ready + progress.failed < progress.total || refreshStatus.value?.state === "running")) {
         progressTimer = setInterval(() => { void refreshThumbnailProgress(topic.id, requestId); }, 1_500);
       }
     }
@@ -76,7 +76,7 @@ async function refreshThumbnailProgress(topicId: string, requestId: number): Pro
     const progress = await request<ThumbnailProgress>(`/api/admin/topics/${encodeURIComponent(topicId)}/thumbnail-progress`);
     if (requestId !== questionRequest) return null;
     thumbnailProgress.value = progress;
-    if (progress.ready + progress.failed >= progress.total && progressTimer) {
+    if (progress.ready + progress.failed >= progress.total && refreshStatus.value?.state !== "running" && progressTimer) {
       clearInterval(progressTimer);
       progressTimer = undefined;
     }
@@ -93,14 +93,19 @@ function connectRefreshStream() {
   refreshStream = new EventSource("/api/admin/thumbnails/refresh/stream");
   refreshStream.onmessage = (event) => {
     const status = JSON.parse(event.data) as ThumbnailRefreshStatus;
+    const wasRunning = refreshStatus.value?.state === "running";
     refreshStatus.value = status;
-    if ((status.state === "completed" || status.state === "failed") && status.revision !== lastAppliedRevision) {
-      lastAppliedRevision = status.revision;
+    if (thumbnailProgress.value) thumbnailProgress.value.processing = status.processing;
+    if (status.state === "running" && !progressTimer && selectedId.value) {
       const topicId = selectedId.value;
       const requestId = questionRequest;
-      if (topicId) void request<TopicQuestionPreview[]>(`/api/admin/topics/${encodeURIComponent(topicId)}/questions`)
-        .then((result) => { if (requestId === questionRequest) questions.value = result; })
-        .catch((cause) => { questionsError.value = cause instanceof Error ? cause.message : "题目读取失败"; });
+      progressTimer = setInterval(() => { void refreshThumbnailProgress(topicId, requestId); }, 1_500);
+    }
+    if (wasRunning && status.state !== "running") {
+      thumbnailRetryToken.value += 1;
+      const topicId = selectedId.value;
+      const requestId = questionRequest;
+      if (topicId) void refreshThumbnailProgress(topicId, requestId);
     }
   };
 }
@@ -121,7 +126,6 @@ onMounted(async () => {
     authenticated.value = true;
     await loadTopics();
     refreshStatus.value = await request<ThumbnailRefreshStatus>("/api/admin/thumbnails/refresh");
-    lastAppliedRevision = refreshStatus.value.revision;
     connectRefreshStream();
   } catch (cause) {
     if (authenticated.value) error.value = cause instanceof Error ? cause.message : "主题列表读取失败";
@@ -139,7 +143,6 @@ async function login() {
     authenticated.value = true;
     await loadTopics();
     refreshStatus.value = await request<ThumbnailRefreshStatus>("/api/admin/thumbnails/refresh");
-    lastAppliedRevision = refreshStatus.value.revision;
     connectRefreshStream();
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "登录失败"; }
   finally { busy.value = false; }
@@ -224,7 +227,7 @@ async function deleteTopic() {
           <p v-if="message" class="topic-page__message" role="status">{{ message }}</p>
           <p v-if="error" class="topic-page__error" role="alert">{{ error }}</p>
         </div>
-        <TopicQuestionBrowser :questions="questions" :loading="questionsLoading" :error="questionsError" :progress="thumbnailProgress" :refresh-status="refreshStatus" :refresh-busy="refreshBusy" @refresh="startThumbnailRefresh" />
+        <TopicQuestionBrowser :questions="questions" :loading="questionsLoading" :error="questionsError" :progress="thumbnailProgress" :refresh-status="refreshStatus" :refresh-busy="refreshBusy" :retry-token="thumbnailRetryToken" @refresh="startThumbnailRefresh" />
       </section>
       <section v-else class="topic-detail"><p v-if="error" class="topic-page__error" role="alert">{{ error }}</p></section>
     </div>

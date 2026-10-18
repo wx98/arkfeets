@@ -99,6 +99,9 @@ try {
   else if (action === "--serve") {
     process.env.ARKFEETS_APP_ROOT = root;
     await import("../../server/dist/index.js");
+  } else if (action === "--thumbnail-precompute") {
+    const { runThumbnailPrecompute } = await import("../../server/dist/admin/thumbnailRefreshWorker.js");
+    await runThumbnailPrecompute(process.argv[3]);
   } else throw new Error("Use --start or --stop.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);

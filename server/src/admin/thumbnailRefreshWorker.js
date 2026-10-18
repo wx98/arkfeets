@@ -1,34 +1,37 @@
-import { renameSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { parentPort } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { renderQuestionThumbnail } from "./thumbnailRenderer.js";
 
-async function run(items) {
+export async function runThumbnailPrecompute(manifest) {
+  const items = JSON.parse(readFileSync(manifest, "utf8"));
   for (const item of items) {
+    if (existsSync(item.target)) {
+      process.stdout.write(`${JSON.stringify({ type: "result", key: item.key, ok: true })}\n`);
+      continue;
+    }
+    process.stdout.write(`${JSON.stringify({ type: "active", key: item.key })}\n`);
     const temporary = `${item.target}.${process.pid}.${randomUUID()}.tmp`;
     let ok = false;
     try {
       const image = await renderQuestionThumbnail(item.source, item.crop);
       await writeFile(temporary, image);
-      renameSync(temporary, item.target);
+      try { renameSync(temporary, item.target); }
+      catch (error) { if (!existsSync(item.target)) throw error; }
       ok = true;
     } catch {
-      // The previous cached image remains available when rebuilding fails.
+      // Failed images are reported to the parent; other images still continue.
     } finally {
       rmSync(temporary, { force: true });
     }
-    if (globalThis.Bun) globalThis.postMessage({ key: item.key, ok });
-    else parentPort?.postMessage({ key: item.key, ok });
+    process.stdout.write(`${JSON.stringify({ type: "result", key: item.key, ok })}\n`);
   }
 }
 
-if (globalThis.Bun) {
-  globalThis.onmessage = (event) => {
-    void run(event.data).then(() => globalThis.postMessage({ done: true })).catch((error) => { throw error; });
-  };
-} else {
-  parentPort?.on("message", (items) => {
-    void run(items).then(() => { parentPort.postMessage({ done: true }); parentPort.close(); }).catch((error) => { throw error; });
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  runThumbnailPrecompute(process.argv[2]).catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
   });
 }

@@ -27,7 +27,7 @@ mkdirSync(target, { recursive: true });
 log("Compiling the standalone Windows executable...");
 const bun = join(project, "node_modules", "bun", "bin", "bun.exe");
 if (!existsSync(bun)) throw new Error("Bun build tool is missing. Run npm install on the build computer.");
-const compiled = spawnSync(bun, ["build", "--compile", join(project, "scripts", "portable", "launcher.mjs"), join(project, "server", "dist", "admin", "thumbnailRefreshWorker.js"), "--outfile", join(target, "arkfeets.exe")], {
+const compiled = spawnSync(bun, ["build", "--compile", join(project, "scripts", "portable", "launcher.mjs"), "--outfile", join(target, "arkfeets.exe")], {
   cwd: project, stdio: "inherit", windowsHide: true,
 });
 if (compiled.status !== 0) throw new Error("Standalone executable compilation failed.");

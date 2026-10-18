@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { writeFile } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { Worker as NodeWorker } from "node:worker_threads";
+import { spawn, type ChildProcess } from "node:child_process";
 import { basename, extname, join, posix, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Writable } from "node:stream";
 import AdmZip from "adm-zip";
 import { z } from "zod";
@@ -24,7 +25,7 @@ import { renderQuestionThumbnail } from "./thumbnailRenderer.js";
 
 type UploadedImage = { buffer: Buffer; mimetype: string; originalname: string };
 type ImportZipEntry = { read: () => Promise<Buffer>; writeTo: (targetPath: string) => Promise<void> };
-export type ThumbnailRefreshStatus = { state: "idle" | "running" | "completed" | "failed"; total: number; processed: number; failed: number; revision: number; error?: string };
+export type ThumbnailRefreshStatus = { state: "idle" | "running" | "completed" | "failed"; total: number; processed: number; failed: number; processing: number; error?: string };
 const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const imageMimeExtensions = new Map([
   ["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/webp", ".webp"], ["image/gif", ".gif"],
@@ -53,13 +54,11 @@ export class QuestionAdminService {
   private readonly topicThumbnailProgress = new Map<string, { keys: Set<string>; ready: Set<string>; failed: Set<string> }>();
   private readonly thumbnailFailures = new Set<string>();
   private readonly refreshListeners = new Set<(status: ThumbnailRefreshStatus) => void>();
-  private refreshStatus: ThumbnailRefreshStatus = { state: "idle", total: 0, processed: 0, failed: 0, revision: 0 };
-  private refreshWorker: NodeWorker | Worker | undefined;
+  private refreshStatus: ThumbnailRefreshStatus = { state: "idle", total: 0, processed: 0, failed: 0, processing: 0 };
+  private refreshProcess: ChildProcess | undefined;
+  private backgroundProcessing = 0;
   private thumbnailWorkers = 0;
   private readonly thumbnailWaiters: Array<() => void> = [];
-  private warmupQueue: Array<{ id: string; key: string }> = [];
-  private warmupTimer: NodeJS.Timeout | undefined;
-  private warmupRunning = false;
   // 题库文件解析结果缓存：key 为文件绝对路径，mtime/size 变化时才重新读盘。
   // 题库规模达到千级后，每次请求全量同步读盘 + zod 解析是读取变慢的根因。
   private readonly parsedFileCache = new Map<string, { mtimeMs: number; size: number; value: unknown }>();
@@ -78,8 +77,6 @@ export class QuestionAdminService {
     mkdirSync(this.questionDataDirectory, { recursive: true });
     mkdirSync(this.questionTrashDirectory, { recursive: true });
     mkdirSync(this.thumbnailDirectory, { recursive: true });
-    const revisionPath = join(this.thumbnailDirectory, "revision");
-    if (existsSync(revisionPath)) this.refreshStatus.revision = Number(readFileSync(revisionPath, "utf8")) || 0;
   }
 
   list() {
@@ -122,19 +119,19 @@ export class QuestionAdminService {
         enabled: info?.enabled ?? false,
       };
     });
-    this.scheduleThumbnailWarmup(topicId, previews);
+    this.indexTopicThumbnails(topicId, previews);
     return previews;
   }
 
-  getTopicThumbnailProgress(id: string): { total: number; ready: number; failed: number } {
+  getTopicThumbnailProgress(id: string): { total: number; ready: number; failed: number; processing: number } {
     const topicId = topicIdSchema.parse(id);
     if (!this.readTopics().some((topic) => topic.id === topicId)) throw new Error("主题不存在");
     if (!this.topicThumbnailProgress.has(topicId)) this.listTopicQuestions(topicId);
     const progress = this.topicThumbnailProgress.get(topicId);
-    return { total: progress?.keys.size ?? 0, ready: progress?.ready.size ?? 0, failed: progress?.failed.size ?? 0 };
+    return { total: progress?.keys.size ?? 0, ready: progress?.ready.size ?? 0, failed: progress?.failed.size ?? 0, processing: this.processingCount() };
   }
 
-  getThumbnailRefreshStatus(): ThumbnailRefreshStatus { return { ...this.refreshStatus }; }
+  getThumbnailRefreshStatus(): ThumbnailRefreshStatus { return { ...this.refreshStatus, processing: this.processingCount() }; }
 
   subscribeThumbnailRefresh(listener: (status: ThumbnailRefreshStatus) => void): () => void {
     this.refreshListeners.add(listener);
@@ -148,43 +145,46 @@ export class QuestionAdminService {
       try {
         const info = this.readJsonCached(this.questionPath(id), (raw) => questionRecordSchema.parse(raw));
         const key = this.thumbnailKey(id, info);
-        return key && info.question ? [{ id, key, info }] : [];
+        return key && info.question && !existsSync(join(this.thumbnailDirectory, `${key}.webp`)) ? [{ key, info }] : [];
       } catch { return []; }
     });
-    if (this.warmupTimer) clearTimeout(this.warmupTimer);
-    this.warmupTimer = undefined;
-    this.warmupQueue = [];
     this.refreshStatus = { ...this.refreshStatus, state: "running", total: items.length, processed: 0, failed: 0, error: undefined };
     this.emitThumbnailRefresh();
-    // Detached from the HTTP response: one worker thread remains active when the page closes.
-    this.refreshThumbnails(items);
+    if (items.length) this.refreshThumbnails(items);
+    else { this.refreshStatus.state = "completed"; this.emitThumbnailRefresh(); }
     return this.getThumbnailRefreshStatus();
   }
 
-  private refreshThumbnails(items: Array<{ id: string; key: string; info: QuestionRecord }>): void {
+  private refreshThumbnails(items: Array<{ key: string; info: QuestionRecord }>): void {
     const workerItems = items.map(({ key, info }) => ({
       key, source: this.imagePath(info.originalImage), target: join(this.thumbnailDirectory, `${key}.webp`), crop: info.question!,
     }));
+    const manifest = join(this.thumbnailDirectory, `precompute-${process.pid}-${randomUUID()}.json`);
     let finished = false;
-    const finish = () => {
+    const finish = (code: number | null) => {
       if (finished) return;
       finished = true;
-      this.refreshWorker = undefined;
+      this.refreshProcess = undefined;
+      this.backgroundProcessing = 0;
+      rmSync(manifest, { force: true });
+      if (code !== 0 && !this.refreshStatus.error) this.refreshStatus.error = `后台进程退出 (${code ?? "未知"})`;
       this.refreshStatus.failed += items.length - this.refreshStatus.processed;
       this.refreshStatus.processed = items.length;
-      try {
-        const revision = Date.now();
-        writeFileSync(join(this.thumbnailDirectory, "revision"), String(revision));
-        this.refreshStatus = { ...this.refreshStatus, state: this.refreshStatus.error ? "failed" : "completed", revision };
-      } catch {
-        this.refreshStatus = { ...this.refreshStatus, state: "failed", error: "刷新结果未能保存", failed: this.refreshStatus.failed + 1 };
-      }
+      this.refreshStatus.state = this.refreshStatus.error ? "failed" : "completed";
       this.emitThumbnailRefresh();
     };
     try {
-      const onMessage = (message: { key: string; ok: boolean } | { done: true }) => {
+      writeFileSync(manifest, JSON.stringify(workerItems), "utf8");
+      const standalone = (globalThis as { Bun?: { isStandaloneExecutable?: boolean } }).Bun?.isStandaloneExecutable;
+      const args = standalone ? ["--thumbnail-precompute", manifest] : [fileURLToPath(new URL("./thumbnailRefreshWorker.js", import.meta.url)), manifest];
+      const child = spawn(process.execPath, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      this.refreshProcess = child;
+      let pending = "";
+      let stderr = "";
+      const onMessage = (message: { type: "active" | "result"; key: string; ok?: boolean }) => {
         if (finished) return;
-        if ("done" in message) { finish(); return; }
+        if (message.type === "active") { this.backgroundProcessing = 1; this.emitThumbnailRefresh(); return; }
+        this.backgroundProcessing = 0;
         if (message.ok) this.markThumbnailReady(message.key);
         else {
           this.refreshStatus.failed += 1;
@@ -193,28 +193,20 @@ export class QuestionAdminService {
         this.refreshStatus.processed += 1;
         this.emitThumbnailRefresh();
       };
-      if ((globalThis as { Bun?: unknown }).Bun) {
-        const worker = new globalThis.Worker("./server/dist/admin/thumbnailRefreshWorker.js");
-        this.refreshWorker = worker;
-        worker.onmessage = (event) => {
-          const message = event.data as { key: string; ok: boolean } | { done: true };
-          onMessage(message);
-          if ("done" in message) worker.terminate();
-        };
-        worker.onerror = (event) => { this.refreshStatus.error = event.message; finish(); };
-        worker.addEventListener("close", finish);
-        worker.postMessage(workerItems);
-      } else {
-        const worker = new NodeWorker(new URL("./thumbnailRefreshWorker.js", import.meta.url));
-        this.refreshWorker = worker;
-        worker.on("message", onMessage);
-        worker.on("error", (error) => { this.refreshStatus.error = error.message; finish(); });
-        worker.on("exit", finish);
-        worker.postMessage(workerItems);
-      }
+      child.stdout?.on("data", (chunk: Buffer) => {
+        pending += chunk.toString("utf8");
+        let end: number;
+        while ((end = pending.indexOf("\n")) !== -1) {
+          const line = pending.slice(0, end); pending = pending.slice(end + 1);
+          try { onMessage(JSON.parse(line)); } catch { this.refreshStatus.error = "后台进度数据无效"; }
+        }
+      });
+      child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-2000); });
+      child.on("error", (error) => { this.refreshStatus.error = error.message; finish(null); });
+      child.on("close", (code) => { if (code !== 0 && stderr) this.refreshStatus.error = stderr.trim(); finish(code); });
     } catch (error) {
-      this.refreshStatus.error = error instanceof Error ? error.message : "工作线程启动失败";
-      finish();
+      this.refreshStatus.error = error instanceof Error ? error.message : "后台进程启动失败";
+      finish(null);
     }
   }
 
@@ -225,7 +217,7 @@ export class QuestionAdminService {
 
   private topicThumbnailUrl(id: string, info: QuestionRecord): string | null {
     const key = this.thumbnailKey(id, info);
-    return key ? `/api/admin/questions/${encodeURIComponent(id)}/thumbnail?v=${key}&r=${this.refreshStatus.revision}` : null;
+    return key ? `/api/admin/questions/${encodeURIComponent(id)}/thumbnail?v=${key}` : null;
   }
 
   private thumbnailKey(id: string, info: QuestionRecord): string | null {
@@ -236,21 +228,18 @@ export class QuestionAdminService {
     return createHash("sha256").update(JSON.stringify(["precise-crop-v3", id, info.originalImage, info.question, image.mtimeMs, image.size])).digest("hex").slice(0, 24);
   }
 
-  private scheduleThumbnailWarmup(topicId: string, previews: Array<{ id: string; thumbnailUrl: string | null }>): void {
-    if (this.warmupTimer) clearTimeout(this.warmupTimer);
+  private indexTopicThumbnails(topicId: string, previews: Array<{ id: string; thumbnailUrl: string | null }>): void {
     const keys = new Set<string>();
     const ready = new Set<string>();
     const failed = new Set<string>();
-    this.warmupQueue = previews.flatMap(({ id, thumbnailUrl }) => {
+    for (const { thumbnailUrl } of previews) {
       const key = thumbnailUrl ? new URL(thumbnailUrl, "http://localhost").searchParams.get("v") : null;
-      if (!key) return [];
+      if (!key) continue;
       keys.add(key);
-      if (existsSync(join(this.thumbnailDirectory, `${key}.webp`))) { ready.add(key); return []; }
-      if (this.thumbnailFailures.has(key)) { failed.add(key); return []; }
-      return [{ id, key }];
-    });
+      if (existsSync(join(this.thumbnailDirectory, `${key}.webp`))) ready.add(key);
+      else if (this.thumbnailFailures.has(key)) failed.add(key);
+    }
     this.topicThumbnailProgress.set(topicId, { keys, ready, failed });
-    if (this.warmupQueue.length) this.queueWarmup(2_000);
   }
 
   private markThumbnailReady(key: string): void {
@@ -267,32 +256,7 @@ export class QuestionAdminService {
     }
   }
 
-  private queueWarmup(delay: number): void {
-    if (this.warmupTimer) clearTimeout(this.warmupTimer);
-    this.warmupTimer = setTimeout(() => {
-      this.warmupTimer = undefined;
-      void this.warmNextThumbnail();
-    }, delay);
-    this.warmupTimer.unref();
-  }
-
-  private async warmNextThumbnail(): Promise<void> {
-    if (this.refreshStatus.state === "running" || this.warmupRunning || this.thumbnailWorkers > 0 || this.thumbnailWaiters.length) {
-      this.queueWarmup(750);
-      return;
-    }
-    const next = this.warmupQueue.shift();
-    if (!next) return;
-    this.warmupRunning = true;
-    try {
-      if (!existsSync(join(this.thumbnailDirectory, `${next.key}.webp`))) await this.getQuestionThumbnail(next.id);
-    } catch {
-      // Invalid images remain visible in the list and use the normal error state.
-    } finally {
-      this.warmupRunning = false;
-      if (this.warmupQueue.length) this.queueWarmup(750);
-    }
-  }
+  private processingCount(): number { return this.thumbnailWorkers + this.backgroundProcessing; }
 
   async getQuestionThumbnail(id: string): Promise<Buffer> {
     if (!this.readCatalogue().some((entry) => entry.id === id)) throw new Error("题目不存在");
@@ -323,9 +287,11 @@ export class QuestionAdminService {
     try {
       const image = await job;
       this.markThumbnailReady(key);
+      this.emitThumbnailRefresh();
       return image;
     } catch (error) {
       this.markThumbnailFailed(key);
+      this.emitThumbnailRefresh();
       throw error;
     } finally { this.thumbnailJobs.delete(key); }
   }
@@ -333,11 +299,13 @@ export class QuestionAdminService {
   private async withThumbnailSlot<T>(task: () => Promise<T>): Promise<T> {
     if (this.thumbnailWorkers >= 2) await new Promise<void>((resolve) => this.thumbnailWaiters.push(resolve));
     else this.thumbnailWorkers += 1;
+    this.emitThumbnailRefresh();
     try { return await task(); }
     finally {
       const next = this.thumbnailWaiters.shift();
       if (next) next();
       else this.thumbnailWorkers -= 1;
+      this.emitThumbnailRefresh();
     }
   }
 

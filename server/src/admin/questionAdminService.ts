@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { writeFile } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import { basename, extname, join, posix, resolve, sep } from "node:path";
 import type { Writable } from "node:stream";
 import AdmZip from "adm-zip";
@@ -51,16 +50,23 @@ export class QuestionAdminService {
   private readonly thumbnailJobs = new Map<string, Promise<Buffer>>();
   private thumbnailWorkers = 0;
   private readonly thumbnailWaiters: Array<() => void> = [];
+  private warmupQueue: Array<{ id: string; key: string }> = [];
+  private warmupTimer: NodeJS.Timeout | undefined;
+  private warmupRunning = false;
   // 题库文件解析结果缓存：key 为文件绝对路径，mtime/size 变化时才重新读盘。
   // 题库规模达到千级后，每次请求全量同步读盘 + zod 解析是读取变慢的根因。
   private readonly parsedFileCache = new Map<string, { mtimeMs: number; size: number; value: unknown }>();
   private listCache: { generation: string; value: ReturnType<QuestionAdminService["buildLibrary"]> } | null = null;
 
-  constructor(private readonly resourceDirectory: string, private readonly repository: QuestionRepository) {
+  constructor(
+    private readonly resourceDirectory: string,
+    private readonly repository: QuestionRepository,
+    thumbnailDirectory = resolve(resourceDirectory, "../..", "tmp", "topic-thumbnails"),
+  ) {
     this.fullDataDirectory = join(resourceDirectory, "full_data");
     this.questionDataDirectory = join(resourceDirectory, "question_data");
     this.questionTrashDirectory = join(resourceDirectory, "question_trash");
-    this.thumbnailDirectory = join(tmpdir(), "arkfeets-topic-thumbnails");
+    this.thumbnailDirectory = thumbnailDirectory;
     mkdirSync(this.fullDataDirectory, { recursive: true });
     mkdirSync(this.questionDataDirectory, { recursive: true });
     mkdirSync(this.questionTrashDirectory, { recursive: true });
@@ -89,7 +95,7 @@ export class QuestionAdminService {
   listTopicQuestions(id: string) {
     const topicId = topicIdSchema.parse(id);
     if (!this.readTopics().some((topic) => topic.id === topicId)) throw new Error("主题不存在");
-    return this.readCatalogue().filter((entry) => entry.topic.includes(topicId)).map((entry) => {
+    const previews = this.readCatalogue().filter((entry) => entry.topic.includes(topicId)).map((entry) => {
       let info: QuestionRecord | null = null;
       try {
         info = this.readJsonCached(this.questionPath(entry.id), (raw) => questionRecordSchema.parse(raw));
@@ -107,6 +113,8 @@ export class QuestionAdminService {
         enabled: info?.enabled ?? false,
       };
     });
+    this.scheduleThumbnailWarmup(previews);
+    return previews;
   }
 
   private topicThumbnailUrl(id: string, info: QuestionRecord): string | null {
@@ -119,8 +127,43 @@ export class QuestionAdminService {
     const source = this.imagePath(info.originalImage);
     if (!existsSync(source)) return null;
     const image = statSync(source);
-    const record = statSync(this.questionPath(id));
-    return createHash("sha256").update(JSON.stringify(["precise-crop-v3", this.resourceDirectory, id, info.question, image.mtimeMs, image.size, record.mtimeMs, record.size])).digest("hex").slice(0, 24);
+    return createHash("sha256").update(JSON.stringify(["precise-crop-v3", id, info.originalImage, info.question, image.mtimeMs, image.size])).digest("hex").slice(0, 24);
+  }
+
+  private scheduleThumbnailWarmup(previews: Array<{ id: string; thumbnailUrl: string | null }>): void {
+    if (this.warmupTimer) clearTimeout(this.warmupTimer);
+    this.warmupQueue = previews.flatMap(({ id, thumbnailUrl }) => {
+      const key = thumbnailUrl?.split("?v=")[1];
+      return key && !existsSync(join(this.thumbnailDirectory, `${key}.webp`)) ? [{ id, key }] : [];
+    });
+    if (this.warmupQueue.length) this.queueWarmup(2_000);
+  }
+
+  private queueWarmup(delay: number): void {
+    if (this.warmupTimer) clearTimeout(this.warmupTimer);
+    this.warmupTimer = setTimeout(() => {
+      this.warmupTimer = undefined;
+      void this.warmNextThumbnail();
+    }, delay);
+    this.warmupTimer.unref();
+  }
+
+  private async warmNextThumbnail(): Promise<void> {
+    if (this.warmupRunning || this.thumbnailWorkers > 0 || this.thumbnailWaiters.length) {
+      this.queueWarmup(750);
+      return;
+    }
+    const next = this.warmupQueue.shift();
+    if (!next) return;
+    this.warmupRunning = true;
+    try {
+      if (!existsSync(join(this.thumbnailDirectory, `${next.key}.webp`))) await this.getQuestionThumbnail(next.id);
+    } catch {
+      // Invalid images remain visible in the list and use the normal error state.
+    } finally {
+      this.warmupRunning = false;
+      if (this.warmupQueue.length) this.queueWarmup(750);
+    }
   }
 
   async getQuestionThumbnail(id: string): Promise<Buffer> {
@@ -128,10 +171,11 @@ export class QuestionAdminService {
     const info = this.readJsonCached(this.questionPath(id), (raw) => questionRecordSchema.parse(raw));
     const key = this.thumbnailKey(id, info);
     if (!key || !info.question) throw new Error("题目谜面不可用");
+    const target = join(this.thumbnailDirectory, `${key}.webp`);
+    if (existsSync(target)) return readFile(target);
     const cached = this.thumbnailJobs.get(key);
     if (cached) return cached;
     const job = this.withThumbnailSlot(async () => {
-      const target = join(this.thumbnailDirectory, `${key}.webp`);
       if (!existsSync(target)) {
         const temporary = join(this.thumbnailDirectory, `${key}.${process.pid}.${randomUUID()}.tmp`);
         try {

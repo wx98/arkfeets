@@ -1,6 +1,23 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ImageOff } from "lucide-vue-next";
+import { queueThumbnailRequest } from "./thumbnailRequestQueue";
+
+const observed = new Map<Element, () => void>();
+let sharedObserver: IntersectionObserver | undefined;
+
+function thumbnailObserver() {
+  sharedObserver ??= new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      sharedObserver?.unobserve(entry.target);
+      const load = observed.get(entry.target);
+      observed.delete(entry.target);
+      load?.();
+    }
+  }, { rootMargin: "240px" });
+  return sharedObserver;
+}
 
 const props = defineProps<{ url: string | null; alt: string }>();
 const emit = defineEmits<{ ready: [image: { url: string; aspect: number }]; clear: [] }>();
@@ -8,15 +25,15 @@ const root = ref<HTMLElement>();
 const imageUrl = ref("");
 const progress = ref<number | null>(null);
 const state = ref<"idle" | "loading" | "ready" | "error">("idle");
-let observer: IntersectionObserver | undefined;
 let request: XMLHttpRequest | undefined;
 let objectUrl = "";
+let cancelQueued: (() => void) | undefined;
 
 function stop() {
   emit("clear");
-  observer?.disconnect();
-  observer = undefined;
-  request?.abort();
+  if (root.value && observed.delete(root.value)) sharedObserver?.unobserve(root.value);
+  cancelQueued?.();
+  cancelQueued = undefined;
   request = undefined;
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = "";
@@ -28,32 +45,43 @@ function stop() {
 function load() {
   if (!props.url || state.value !== "idle") return;
   state.value = "loading";
-  const xhr = new XMLHttpRequest();
-  request = xhr;
-  xhr.open("GET", props.url);
-  xhr.responseType = "blob";
-  xhr.onprogress = (event) => {
-    if (request === xhr) progress.value = event.lengthComputable ? Math.min(99, Math.round(event.loaded / event.total * 100)) : null;
-  };
-  xhr.onload = () => {
-    if (request !== xhr) return;
-    request = undefined;
-    if (xhr.status !== 200) { state.value = "error"; return; }
-    objectUrl = URL.createObjectURL(xhr.response as Blob);
-    imageUrl.value = objectUrl;
-    progress.value = 100;
-  };
-  xhr.onerror = () => { if (request === xhr) { request = undefined; state.value = "error"; } };
-  xhr.send();
+  cancelQueued = queueThumbnailRequest((done) => {
+    const xhr = new XMLHttpRequest();
+    request = xhr;
+    xhr.open("GET", props.url!);
+    xhr.responseType = "blob";
+    xhr.onprogress = (event) => {
+      if (request === xhr) progress.value = event.lengthComputable ? Math.min(99, Math.round(event.loaded / event.total * 100)) : null;
+    };
+    xhr.onload = () => {
+      if (request !== xhr) return;
+      request = undefined;
+      cancelQueued = undefined;
+      if (xhr.status !== 200) state.value = "error";
+      else {
+        objectUrl = URL.createObjectURL(xhr.response as Blob);
+        imageUrl.value = objectUrl;
+        progress.value = 100;
+      }
+      done();
+    };
+    xhr.onerror = () => {
+      if (request !== xhr) return;
+      request = undefined;
+      cancelQueued = undefined;
+      state.value = "error";
+      done();
+    };
+    xhr.send();
+    return () => { request = undefined; xhr.abort(); };
+  });
 }
 
 function observe() {
   if (!props.url || !root.value) return;
   if (!("IntersectionObserver" in window)) { load(); return; }
-  observer = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) { observer?.disconnect(); observer = undefined; load(); }
-  }, { rootMargin: "240px" });
-  observer.observe(root.value);
+  observed.set(root.value, load);
+  thumbnailObserver().observe(root.value);
 }
 
 function imageFailed() {
@@ -76,7 +104,7 @@ function imageReady(event: Event) {
 
 <template>
   <span ref="root" class="topic-thumbnail">
-    <img v-if="imageUrl" :src="imageUrl" :alt="alt" loading="lazy" @load="imageReady" @error="imageFailed" />
+    <img v-if="imageUrl" :src="imageUrl" :alt="alt" @load="imageReady" @error="imageFailed" />
     <span v-if="state === 'loading'" class="topic-thumbnail__loading" role="progressbar" :aria-label="`加载 ${alt}`" :aria-valuenow="progress ?? undefined" aria-valuemin="0" aria-valuemax="100">
       <svg viewBox="0 0 40 40" aria-hidden="true"><circle class="topic-thumbnail__track" cx="20" cy="20" r="16" /><circle class="topic-thumbnail__arc" :class="{ 'topic-thumbnail__arc--pending': progress === null }" cx="20" cy="20" r="16" :style="{ strokeDashoffset: progress === null ? 72 : 100 - progress }" /></svg>
       <small>{{ progress === null ? '···' : `${progress}%` }}</small>

@@ -285,4 +285,5 @@ dist
 /server/live_user_access.json
 /server/live_user_access.json.*.tmp
 /release/
+/tmp/
 .workbuddy/

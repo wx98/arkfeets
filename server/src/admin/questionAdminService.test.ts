@@ -138,8 +138,11 @@ describe("QuestionAdminService", () => {
     expect(first.toString("ascii", 8, 12)).toBe("WEBP");
     expect(first.length).toBeLessThan(20_000);
     expect(await service.getQuestionThumbnail("existing")).toEqual(first);
+    expect(readFileSync(join(rootDirectory, "tmp", "topic-thumbnails", `${service.listTopicQuestions("脚")[0].thumbnailUrl?.split("v=")[1]}.webp`))).toEqual(first);
     await expect(service.getQuestionThumbnail("missing")).rejects.toThrow("题目不存在");
     const oldUrl = service.listTopicQuestions("脚")[0].thumbnailUrl;
+    service.updateQuestion("existing", { ...validInput(["新答案"]), title: "新标题" });
+    expect(service.listTopicQuestions("脚")[0].thumbnailUrl).toBe(oldUrl);
     service.updateQuestion("existing", { ...validInput(["旧答案"]), title: "题目", question: { x: 100, y: 80, width: 100, height: 80, sourceWidth: 200, sourceHeight: 160 } });
     expect(service.listTopicQuestions("脚")[0].thumbnailUrl).not.toBe(oldUrl);
     expect(await service.getQuestionThumbnail("existing")).not.toEqual(first);
@@ -253,7 +256,7 @@ describe("QuestionAdminService", () => {
 });
 
 function createService() {
-  return new QuestionAdminService(rootDirectory, new QuestionRepository(rootDirectory));
+  return new QuestionAdminService(rootDirectory, new QuestionRepository(rootDirectory), join(rootDirectory, "tmp", "topic-thumbnails"));
 }
 
 function validInput(answers: string[], originalImage = "existing.png") {

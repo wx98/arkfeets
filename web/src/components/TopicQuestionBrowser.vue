@@ -53,7 +53,6 @@ const filtered = computed(() => {
   const needle = normalize(search.value);
   return needle ? props.questions.filter((question) => normalize([question.title, ...question.tags].join(" ")).includes(needle)) : props.questions;
 });
-
 function normalize(value: string) { return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, ""); }
 function changeMode(event: Event) {
   mode.value = (event.target as HTMLSelectElement).value as ViewMode;
@@ -89,13 +88,13 @@ onBeforeUnmount(hidePreview);
       <div v-else :class="['topic-browser__items', `topic-browser__items--${mode}`]">
         <div v-if="mode === 'details'" class="topic-browser__columns" aria-hidden="true"><span>谜面 / 标题</span><span>标签</span><span>关联原图</span><span>状态</span></div>
         <a v-for="question in filtered" :key="question.id" :href="editUrl(question.id)" target="_blank" rel="noopener noreferrer" class="topic-browser__item" :aria-label="`在新标签页编辑 ${question.title}`" @mouseenter="showPreview(question, $event)" @mousemove="movePreview" @mouseleave="hidePreview">
-          <span class="topic-browser__thumb">
-            <TopicQuestionThumbnail :url="question.thumbnailUrl" :alt="`${question.title}的谜面`" @ready="setThumbnail(question.id, $event)" @clear="clearThumbnail(question.id)" />
-          </span>
-          <span class="topic-browser__copy"><strong>{{ question.title }}</strong><small v-if="mode === 'content'">{{ question.hint || '暂无提示' }}</small></span>
-          <span class="topic-browser__tags">{{ question.tags.join(' · ') || '无标签' }}</span>
-          <span class="topic-browser__source">{{ question.originalImage || '无原图' }}</span>
-          <span class="topic-browser__status" :class="{ 'topic-browser__status--off': !question.enabled }">{{ question.enabled ? '已启用' : '未启用' }}</span>
+              <span class="topic-browser__thumb">
+                <TopicQuestionThumbnail :url="question.thumbnailUrl" :alt="`${question.title}的谜面`" @ready="setThumbnail(question.id, $event)" @clear="clearThumbnail(question.id)" />
+              </span>
+              <span class="topic-browser__copy"><strong>{{ question.title }}</strong><small v-if="mode === 'content'">{{ question.hint || '暂无提示' }}</small></span>
+              <span class="topic-browser__tags">{{ question.tags.join(' · ') || '无标签' }}</span>
+              <span class="topic-browser__source">{{ question.originalImage || '无原图' }}</span>
+              <span class="topic-browser__status" :class="{ 'topic-browser__status--off': !question.enabled }">{{ question.enabled ? '已启用' : '未启用' }}</span>
         </a>
       </div>
     </div>
@@ -114,7 +113,7 @@ onBeforeUnmount(hidePreview);
 .topic-browser__search, .topic-browser__mode { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid #b8c3b8; color: #58635a; background: #fff; }
 .topic-browser__search { width: min(280px, 38%); }.topic-browser__search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 12px; }.topic-browser__mode select { max-width: 115px; border: 0; outline: 0; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .topic-browser__body { min-height: 0; flex: 1; overflow: auto; padding: 16px 18px 26px; }.topic-browser__empty, .topic-browser__error { margin: 25px 0; color: #68736c; font-size: 13px; }.topic-browser__error { color: #a83f35; }
-.topic-browser__items { display: grid; align-content: start; gap: 10px; }.topic-browser__item { min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 7px; border: 1px solid transparent; color: #252d28; background: transparent; text-align: left; text-decoration: none; font: inherit; cursor: pointer; }.topic-browser__item:hover, .topic-browser__item:focus-visible { border-color: #a1b956; background: #eef5df; outline: 0; }
+.topic-browser__items { display: grid; align-content: start; gap: 10px; }.topic-browser__item { box-sizing: border-box; min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 7px; border: 1px solid transparent; color: #252d28; background: transparent; text-align: left; text-decoration: none; font: inherit; cursor: pointer; }.topic-browser__item:hover, .topic-browser__item:focus-visible { border-color: #a1b956; background: #eef5df; outline: 0; }
 .topic-browser__thumb { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; color: #7b847e; background-color: #fff; background-image: linear-gradient(45deg,#e5e9e5 25%,transparent 25%),linear-gradient(-45deg,#e5e9e5 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e5e9e5 75%),linear-gradient(-45deg,transparent 75%,#e5e9e5 75%); background-size: 18px 18px; background-position: 0 0,0 9px,9px -9px,-9px 0; }
 .topic-browser__copy { min-width: 0; }.topic-browser__copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }.topic-browser__copy small { display: block; margin-top: 4px; color: #68736c; font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.topic-browser__tags, .topic-browser__source, .topic-browser__status { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #68736c; font-size: 11px; }
 .topic-browser__items--extra { grid-template-columns: repeat(auto-fill,minmax(230px,1fr)); }.topic-browser__items--large { grid-template-columns: repeat(auto-fill,minmax(175px,1fr)); }.topic-browser__items--medium { grid-template-columns: repeat(auto-fill,minmax(125px,1fr)); }.topic-browser__items--small { grid-template-columns: repeat(auto-fill,minmax(88px,1fr)); }

@@ -10,7 +10,8 @@
     "dev": "concurrently -n server,web -c green,cyan \"npm run dev -w server\" \"npm run dev -w web\"",
     "build": "npm run build -w server && npm run build -w web",
     "test": "npm run test -w server",
-    "start": "npm run start -w server"
+    "start": "npm run start -w server",
+    "package:win": "npm run build && node scripts/build-portable.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

@@ -67,8 +67,15 @@ app.put("/api/game/room-setup", (request, response) => {
   catch (error) { response.status(400).json({ message: error instanceof Error ? error.message : "保存失败" }); }
 });
 
-app.get("/api/health", (_request, response) => {
-  response.json({ ok: true, time: Date.now(), questions: questionRepository.getValidationReport().validCount });
+app.get("/api/health", (request, response) => {
+  const address = request.socket.remoteAddress;
+  const local = address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+  response.json({
+    ok: true,
+    time: Date.now(),
+    questions: questionRepository.getValidationReport().validCount,
+    ...(local && process.env.ARKFEETS_INSTANCE_ID ? { instanceId: process.env.ARKFEETS_INSTANCE_ID } : {}),
+  });
 });
 
 app.get("/api/questions/validation", (_request, response) => {

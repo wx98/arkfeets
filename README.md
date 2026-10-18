@@ -56,6 +56,12 @@ npm start
 
 默认监听 `0.0.0.0:3000`。本机访问 `http://localhost:3000`；同一局域网的其他设备访问 `http://主机局域网IP:3000`。如其他设备无法连接，请允许 Node.js 通过系统防火墙的专用网络，或放行 TCP 3000 端口。
 
+### Windows 便携发布包
+
+在 Windows 构建机安装好 Node.js、Python 3 和 Pillow 后运行 `npm run package:win`。脚本使用淘宝镜像准备生产依赖，生成 `release/` 下的便携目录及同名 ZIP。发布包内含 Node.js、Python/Pillow、前后端构建结果和当前 `server/config.json`，但**不包含题目、原图及已有对局日志**；使用方无需再安装运行环境。
+
+解压 ZIP 后双击 `start.cmd`，健康检查通过后自动打开浏览器；双击 `stop.cmd` 只停止本发布包启动的服务。默认端口是 3000，后台日志在 `.runtime/`。首次启动后，通过后台的题库导入功能迁移题目和原图；新对局日志写入 `server/logs/games`。发布前检查配置中的密码和直播间信息，不要把包含敏感配置的 ZIP 公开分发。
+
 可用环境变量：
 
 ```powershell

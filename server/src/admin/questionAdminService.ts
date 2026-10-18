@@ -48,6 +48,8 @@ export class QuestionAdminService {
   private readonly questionTrashDirectory: string;
   private readonly thumbnailDirectory: string;
   private readonly thumbnailJobs = new Map<string, Promise<Buffer>>();
+  private readonly topicThumbnailProgress = new Map<string, { keys: Set<string>; ready: Set<string>; failed: Set<string> }>();
+  private readonly thumbnailFailures = new Set<string>();
   private thumbnailWorkers = 0;
   private readonly thumbnailWaiters: Array<() => void> = [];
   private warmupQueue: Array<{ id: string; key: string }> = [];
@@ -113,8 +115,16 @@ export class QuestionAdminService {
         enabled: info?.enabled ?? false,
       };
     });
-    this.scheduleThumbnailWarmup(previews);
+    this.scheduleThumbnailWarmup(topicId, previews);
     return previews;
+  }
+
+  getTopicThumbnailProgress(id: string): { total: number; ready: number; failed: number } {
+    const topicId = topicIdSchema.parse(id);
+    if (!this.readTopics().some((topic) => topic.id === topicId)) throw new Error("主题不存在");
+    if (!this.topicThumbnailProgress.has(topicId)) this.listTopicQuestions(topicId);
+    const progress = this.topicThumbnailProgress.get(topicId);
+    return { total: progress?.keys.size ?? 0, ready: progress?.ready.size ?? 0, failed: progress?.failed.size ?? 0 };
   }
 
   private topicThumbnailUrl(id: string, info: QuestionRecord): string | null {
@@ -130,13 +140,35 @@ export class QuestionAdminService {
     return createHash("sha256").update(JSON.stringify(["precise-crop-v3", id, info.originalImage, info.question, image.mtimeMs, image.size])).digest("hex").slice(0, 24);
   }
 
-  private scheduleThumbnailWarmup(previews: Array<{ id: string; thumbnailUrl: string | null }>): void {
+  private scheduleThumbnailWarmup(topicId: string, previews: Array<{ id: string; thumbnailUrl: string | null }>): void {
     if (this.warmupTimer) clearTimeout(this.warmupTimer);
+    const keys = new Set<string>();
+    const ready = new Set<string>();
+    const failed = new Set<string>();
     this.warmupQueue = previews.flatMap(({ id, thumbnailUrl }) => {
       const key = thumbnailUrl?.split("?v=")[1];
-      return key && !existsSync(join(this.thumbnailDirectory, `${key}.webp`)) ? [{ id, key }] : [];
+      if (!key) return [];
+      keys.add(key);
+      if (existsSync(join(this.thumbnailDirectory, `${key}.webp`))) { ready.add(key); return []; }
+      if (this.thumbnailFailures.has(key)) { failed.add(key); return []; }
+      return [{ id, key }];
     });
+    this.topicThumbnailProgress.set(topicId, { keys, ready, failed });
     if (this.warmupQueue.length) this.queueWarmup(2_000);
+  }
+
+  private markThumbnailReady(key: string): void {
+    this.thumbnailFailures.delete(key);
+    for (const progress of this.topicThumbnailProgress.values()) {
+      if (progress.keys.has(key)) { progress.ready.add(key); progress.failed.delete(key); }
+    }
+  }
+
+  private markThumbnailFailed(key: string): void {
+    this.thumbnailFailures.add(key);
+    for (const progress of this.topicThumbnailProgress.values()) {
+      if (progress.keys.has(key) && !progress.ready.has(key)) progress.failed.add(key);
+    }
   }
 
   private queueWarmup(delay: number): void {
@@ -172,7 +204,11 @@ export class QuestionAdminService {
     const key = this.thumbnailKey(id, info);
     if (!key || !info.question) throw new Error("题目谜面不可用");
     const target = join(this.thumbnailDirectory, `${key}.webp`);
-    if (existsSync(target)) return readFile(target);
+    if (existsSync(target)) {
+      const image = await readFile(target);
+      this.markThumbnailReady(key);
+      return image;
+    }
     const cached = this.thumbnailJobs.get(key);
     if (cached) return cached;
     const job = this.withThumbnailSlot(async () => {
@@ -188,7 +224,14 @@ export class QuestionAdminService {
       return readFile(target);
     });
     this.thumbnailJobs.set(key, job);
-    try { return await job; } finally { this.thumbnailJobs.delete(key); }
+    try {
+      const image = await job;
+      this.markThumbnailReady(key);
+      return image;
+    } catch (error) {
+      this.markThumbnailFailed(key);
+      throw error;
+    } finally { this.thumbnailJobs.delete(key); }
   }
 
   private async withThumbnailSlot<T>(task: () => Promise<T>): Promise<T> {

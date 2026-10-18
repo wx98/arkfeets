@@ -90,6 +90,7 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
   router.get("/library", (_request, response) => run(response, () => questions.list()));
   router.get("/topics", (_request, response) => run(response, () => questions.listTopics()));
   router.get("/topics/:id/questions", (request, response) => run(response, () => questions.listTopicQuestions(String(request.params.id))));
+  router.get("/topics/:id/thumbnail-progress", (request, response) => run(response, () => questions.getTopicThumbnailProgress(String(request.params.id))));
   router.get("/questions/:id/thumbnail", async (request, response) => {
     try {
       const image = await questions.getQuestionThumbnail(String(request.params.id));

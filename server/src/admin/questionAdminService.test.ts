@@ -133,7 +133,10 @@ describe("QuestionAdminService", () => {
   it("renders and caches a compact WebP from the question crop", async () => {
     writeFileSync(join(rootDirectory, "full_data", "existing.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP4z8DAAMIM////ZwAAHu8E/KPItPcAAAAASUVORK5CYII=", "base64"));
     const service = createService();
+    service.listTopicQuestions("脚");
+    expect(service.getTopicThumbnailProgress("脚")).toEqual({ total: 1, ready: 0, failed: 0 });
     const first = await service.getQuestionThumbnail("existing");
+    expect(service.getTopicThumbnailProgress("脚")).toEqual({ total: 1, ready: 1, failed: 0 });
     expect(first.toString("ascii", 0, 4)).toBe("RIFF");
     expect(first.toString("ascii", 8, 12)).toBe("WEBP");
     expect(first.length).toBeLessThan(20_000);
@@ -141,11 +144,21 @@ describe("QuestionAdminService", () => {
     expect(readFileSync(join(rootDirectory, "tmp", "topic-thumbnails", `${service.listTopicQuestions("脚")[0].thumbnailUrl?.split("v=")[1]}.webp`))).toEqual(first);
     await expect(service.getQuestionThumbnail("missing")).rejects.toThrow("题目不存在");
     const oldUrl = service.listTopicQuestions("脚")[0].thumbnailUrl;
-    service.updateQuestion("existing", { ...validInput(["新答案"]), title: "新标题" });
+    service.updateQuestion("existing", { ...validInput(["新答案"]), title: "新标题", hint: "新提示", tags: ["新标签"] });
     expect(service.listTopicQuestions("脚")[0].thumbnailUrl).toBe(oldUrl);
+    expect(service.getTopicThumbnailProgress("脚")).toEqual({ total: 1, ready: 1, failed: 0 });
     service.updateQuestion("existing", { ...validInput(["旧答案"]), title: "题目", question: { x: 100, y: 80, width: 100, height: 80, sourceWidth: 200, sourceHeight: 160 } });
     expect(service.listTopicQuestions("脚")[0].thumbnailUrl).not.toBe(oldUrl);
+    expect(service.getTopicThumbnailProgress("脚")).toEqual({ total: 1, ready: 0, failed: 0 });
     expect(await service.getQuestionThumbnail("existing")).not.toEqual(first);
+    expect(service.getTopicThumbnailProgress("脚")).toEqual({ total: 1, ready: 1, failed: 0 });
+  });
+
+  it("counts failed thumbnail renders separately from completed ones", async () => {
+    const service = createService();
+    service.listTopicQuestions("脚");
+    await expect(service.getQuestionThumbnail("existing")).rejects.toThrow();
+    expect(service.getTopicThumbnailProgress("脚")).toEqual({ total: 1, ready: 0, failed: 1 });
   });
 
   it("keeps fractional crop edges instead of rounding the source rectangle", async () => {

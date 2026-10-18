@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ArrowLeft, Check, Layers3, Plus, Save, Trash2 } from "lucide-vue-next";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import TopicQuestionBrowser, { type TopicQuestionPreview } from "../components/TopicQuestionBrowser.vue";
 
 interface Topic { id: string; name: string; isDefault: boolean; questionCount: number }
+interface ThumbnailProgress { total: number; ready: number; failed: number }
 const router = useRouter();
 const checking = ref(true);
 const authenticated = ref(false);
@@ -19,7 +20,9 @@ const newName = ref("");
 const questions = ref<TopicQuestionPreview[]>([]);
 const questionsLoading = ref(false);
 const questionsError = ref("");
+const thumbnailProgress = ref<ThumbnailProgress | null>(null);
 let questionRequest = 0;
+let progressTimer: ReturnType<typeof setInterval> | undefined;
 const selected = computed(() => topics.value.find((topic) => topic.id === selectedId.value));
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -35,6 +38,9 @@ async function loadTopics(preferredId = selectedId.value) {
 }
 
 async function choose(topic?: Topic) {
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = undefined;
+  thumbnailProgress.value = null;
   selectedId.value = topic?.id ?? "";
   editedName.value = topic?.name ?? "";
   error.value = "";
@@ -46,11 +52,34 @@ async function choose(topic?: Topic) {
   questionsLoading.value = true;
   try {
     const result = await request<TopicQuestionPreview[]>(`/api/admin/topics/${encodeURIComponent(topic.id)}/questions`);
-    if (requestId === questionRequest) questions.value = result;
+    if (requestId === questionRequest) {
+      questions.value = result;
+      const progress = await refreshThumbnailProgress(topic.id, requestId);
+      if (progress && progress.ready + progress.failed < progress.total) {
+        progressTimer = setInterval(() => { void refreshThumbnailProgress(topic.id, requestId); }, 1_500);
+      }
+    }
   } catch (cause) {
     if (requestId === questionRequest) questionsError.value = cause instanceof Error ? cause.message : "题目读取失败";
   } finally {
     if (requestId === questionRequest) questionsLoading.value = false;
+  }
+}
+
+async function refreshThumbnailProgress(topicId: string, requestId: number): Promise<ThumbnailProgress | null> {
+  try {
+    const progress = await request<ThumbnailProgress>(`/api/admin/topics/${encodeURIComponent(topicId)}/thumbnail-progress`);
+    if (requestId !== questionRequest) return null;
+    thumbnailProgress.value = progress;
+    if (progress.ready + progress.failed >= progress.total && progressTimer) {
+      clearInterval(progressTimer);
+      progressTimer = undefined;
+    }
+    return progress;
+  } catch {
+    if (progressTimer) clearInterval(progressTimer);
+    progressTimer = undefined;
+    return null;
   }
 }
 
@@ -65,6 +94,7 @@ onMounted(async () => {
   }
   finally { checking.value = false; }
 });
+onBeforeUnmount(() => { if (progressTimer) clearInterval(progressTimer); });
 
 async function login() {
   busy.value = true; error.value = "";
@@ -157,7 +187,7 @@ async function deleteTopic() {
           <p v-if="message" class="topic-page__message" role="status">{{ message }}</p>
           <p v-if="error" class="topic-page__error" role="alert">{{ error }}</p>
         </div>
-        <TopicQuestionBrowser :questions="questions" :loading="questionsLoading" :error="questionsError" />
+        <TopicQuestionBrowser :questions="questions" :loading="questionsLoading" :error="questionsError" :progress="thumbnailProgress" />
       </section>
       <section v-else class="topic-detail"><p v-if="error" class="topic-page__error" role="alert">{{ error }}</p></section>
     </div>

@@ -1,6 +1,6 @@
 @echo off
 title Arkfeets - Start
-"%~dp0runtime\node\node.exe" "%~dp0start.mjs"
+"%~dp0arkfeets.exe" --start
 if errorlevel 1 (
   echo.
   echo Start failed. Check the message above or .runtime\stderr.log.

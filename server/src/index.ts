@@ -28,7 +28,9 @@ const host = process.env.HOST ?? "0.0.0.0";
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-const currentDir = dirname(fileURLToPath(import.meta.url));
+const currentDir = process.env.ARKFEETS_APP_ROOT
+  ? join(process.env.ARKFEETS_APP_ROOT, "server", "dist")
+  : dirname(fileURLToPath(import.meta.url));
 const resourceDirectory = join(currentDir, "../resource");
 const preferencesStore = new GamePreferencesStore(join(currentDir, "../config.json"));
 const config = JSON.parse(readFileSync(join(currentDir, "../config.json"), "utf8")) as {

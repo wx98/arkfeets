@@ -1,6 +1,6 @@
 @echo off
 title Arkfeets - Stop
-"%~dp0runtime\node\node.exe" "%~dp0stop.mjs"
+"%~dp0arkfeets.exe" --stop
 if errorlevel 1 (
   echo.
   echo Stop failed. Check the message above.

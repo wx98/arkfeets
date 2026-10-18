@@ -9,7 +9,7 @@
 - Node.js 20 或更高版本
 - npm 10 或更高版本
 - Windows、macOS 或 Linux 局域网主机
-- Python 3 与 Pillow（主题管理的谜面缩略图由服务端按需裁切、压缩）
+- Python 3 与 Pillow 仅用于历史模型/诊断脚本；游戏运行不需要
 
 ## 安装
 
@@ -21,7 +21,7 @@ npm install --registry=https://registry.npmmirror.com
 
 若本机 npm 配置了已经失效的代理，请先修复代理配置；镜像地址仍保持为 `https://registry.npmmirror.com`。
 
-主题缩略图需要 Pillow：`python -m pip install Pillow`。如 Python 不在默认命令路径，可设置 `ARKFEETS_PYTHON` 为 Python 可执行文件路径。生成的 WebP 缓存在系统临时目录，不修改原图或题目文件。
+主题缩略图由服务端按需裁切并编码为 WebP，缓存在系统临时目录，不修改原图或题目文件。
 
 ## 配置
 
@@ -58,9 +58,9 @@ npm start
 
 ### Windows 便携发布包
 
-在开发电脑双击根目录的 `package.bat`，或运行 `npm run package:win`。打包会先编译前后端，再使用淘宝镜像准备生产依赖，生成 `release/` 下的生产目录及同名 ZIP。构建电脑需要已有 Node.js、Python 3 和 Pillow；**使用发布包的电脑无需安装 Node.js、Python、npm 或其他依赖**，所需运行时已随包携带。发布包不包含前后端开发源码、题目、原图及已有对局日志。
+在开发电脑安装依赖后，双击根目录的 `package.bat`，或运行 `npm run package:win`。打包会先编译前后端，再生成 `release/` 下的生产目录及同名 ZIP。构建电脑需要 Node.js/npm，并可通过淘宝镜像安装依赖；**使用发布包的电脑无需安装 Node.js、Python、npm 或其他依赖**。服务端代码与依赖被编译进 `arkfeets.exe`，目录不包含 `node_modules`、Node.js/Python 运行目录、题目、原图及已有对局日志。
 
-解压 ZIP 后双击 `start.cmd`，它会用随包 Node.js 拉起服务，健康检查通过后自动打开浏览器，并留在结果窗口；关闭这个窗口不会停止服务。双击 `stop.cmd` 只停止本发布包启动的服务，也会留窗显示结果。默认端口是 3000，后台日志在 `.runtime/`。首次启动后，通过后台的题库导入功能迁移题目和原图；新对局日志写入 `server/logs/games`。发布前检查随包 `server/config.json` 中的密码和直播间信息，不要把包含敏感配置的 ZIP 公开分发。
+解压 ZIP 后双击 `start.cmd`，它会运行 `arkfeets.exe` 拉起服务，健康检查通过后自动打开浏览器，并留在结果窗口；关闭这个窗口不会停止服务。双击 `stop.cmd` 只停止本发布包启动的服务，也会留窗显示结果。默认端口是 3000，后台日志在 `.runtime/`。首次启动后，通过后台的题库导入功能迁移题目和原图；新对局日志写入 `server/logs/games`。发布前检查随包 `server/config.json` 中的密码和直播间信息，不要把包含敏感配置的 ZIP 公开分发。
 
 可用环境变量：
 

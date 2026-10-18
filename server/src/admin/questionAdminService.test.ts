@@ -1,9 +1,9 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import AdmZip from "adm-zip";
+import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { QuestionRepository } from "../question/questionRepository.js";
 import { QuestionAdminService, validateArchivePath } from "./questionAdminService.js";
@@ -153,9 +153,8 @@ describe("QuestionAdminService", () => {
       question: { x: 0.49, y: 0.49, width: 1.02, height: 1.02, sourceWidth: 2, sourceHeight: 2 },
     });
     const thumbnail = await service.getQuestionThumbnail("existing");
-    const python = process.env.ARKFEETS_PYTHON || (process.platform === "win32" ? "python" : "python3");
-    const dimensions = execFileSync(python, ["-c", "from PIL import Image; from io import BytesIO; import json,sys; print(json.dumps(Image.open(BytesIO(sys.stdin.buffer.read())).size))"], { input: thumbnail });
-    expect(JSON.parse(dimensions.toString())).toEqual([1, 1]);
+    const dimensions = await sharp(thumbnail).metadata();
+    expect([dimensions.width, dimensions.height]).toEqual([1, 1]);
   });
 
   it("keeps a topic while a deleted question still references it", () => {

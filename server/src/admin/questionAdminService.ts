@@ -2,12 +2,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { writeFile } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, extname, join, posix, resolve, sep } from "node:path";
-import { dirname } from "node:path";
 import type { Writable } from "node:stream";
-import { fileURLToPath } from "node:url";
 import AdmZip from "adm-zip";
 import { z } from "zod";
 import {
@@ -23,6 +20,7 @@ import { difficulties } from "../question/types.js";
 import { initialTopics, topicIdSchema, topicSchema, topicsSchema, type Topic } from "../question/topics.js";
 import { StreamingZipReader } from "./streamingZipReader.js";
 import { storedZipSourceSize, writeStoredZip, type StoredZipEntry } from "./streamingZipWriter.js";
+import { renderQuestionThumbnail } from "./thumbnailRenderer.js";
 
 type UploadedImage = { buffer: Buffer; mimetype: string; originalname: string };
 type ImportZipEntry = { read: () => Promise<Buffer>; writeTo: (targetPath: string) => Promise<void> };
@@ -122,7 +120,7 @@ export class QuestionAdminService {
     if (!existsSync(source)) return null;
     const image = statSync(source);
     const record = statSync(this.questionPath(id));
-    return createHash("sha256").update(JSON.stringify(["precise-crop-v2", this.resourceDirectory, id, info.question, image.mtimeMs, image.size, record.mtimeMs, record.size])).digest("hex").slice(0, 24);
+    return createHash("sha256").update(JSON.stringify(["precise-crop-v3", this.resourceDirectory, id, info.question, image.mtimeMs, image.size, record.mtimeMs, record.size])).digest("hex").slice(0, 24);
   }
 
   async getQuestionThumbnail(id: string): Promise<Buffer> {
@@ -137,7 +135,8 @@ export class QuestionAdminService {
       if (!existsSync(target)) {
         const temporary = join(this.thumbnailDirectory, `${key}.${process.pid}.${randomUUID()}.tmp`);
         try {
-          await this.renderThumbnail(this.imagePath(info.originalImage), info.question!, temporary);
+          const thumbnail = await renderQuestionThumbnail(this.imagePath(info.originalImage), info.question!);
+          await writeFile(temporary, thumbnail);
           try { renameSync(temporary, target); }
           catch (error) { if (existsSync(target)) rmSync(temporary, { force: true }); else throw error; }
         } finally { rmSync(temporary, { force: true }); }
@@ -157,18 +156,6 @@ export class QuestionAdminService {
       if (next) next();
       else this.thumbnailWorkers -= 1;
     }
-  }
-
-  private renderThumbnail(source: string, crop: NonNullable<QuestionRecord["question"]>, target: string): Promise<void> {
-    const script = join(dirname(fileURLToPath(import.meta.url)), "../../scripts/render_topic_thumbnail.py");
-    const executable = process.env.ARKFEETS_PYTHON || (process.platform === "win32" ? "python" : "python3");
-    return new Promise((resolve, reject) => {
-      const child = spawn(executable, [script, source, JSON.stringify(crop), target], { windowsHide: true });
-      let diagnostic = "";
-      child.stderr.on("data", (chunk: Buffer) => { diagnostic = (diagnostic + chunk.toString()).slice(-2000); });
-      child.once("error", reject);
-      child.once("close", (code) => code === 0 ? resolve() : reject(new Error(diagnostic.trim() || `缩略图生成失败 (${code})`)));
-    });
   }
 
   private buildLibrary() {

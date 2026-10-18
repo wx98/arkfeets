@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { writeFile } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
+import { Worker as NodeWorker } from "node:worker_threads";
 import { basename, extname, join, posix, resolve, sep } from "node:path";
 import type { Writable } from "node:stream";
 import AdmZip from "adm-zip";
@@ -23,6 +24,7 @@ import { renderQuestionThumbnail } from "./thumbnailRenderer.js";
 
 type UploadedImage = { buffer: Buffer; mimetype: string; originalname: string };
 type ImportZipEntry = { read: () => Promise<Buffer>; writeTo: (targetPath: string) => Promise<void> };
+export type ThumbnailRefreshStatus = { state: "idle" | "running" | "completed" | "failed"; total: number; processed: number; failed: number; revision: number; error?: string };
 const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const imageMimeExtensions = new Map([
   ["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/webp", ".webp"], ["image/gif", ".gif"],
@@ -50,6 +52,9 @@ export class QuestionAdminService {
   private readonly thumbnailJobs = new Map<string, Promise<Buffer>>();
   private readonly topicThumbnailProgress = new Map<string, { keys: Set<string>; ready: Set<string>; failed: Set<string> }>();
   private readonly thumbnailFailures = new Set<string>();
+  private readonly refreshListeners = new Set<(status: ThumbnailRefreshStatus) => void>();
+  private refreshStatus: ThumbnailRefreshStatus = { state: "idle", total: 0, processed: 0, failed: 0, revision: 0 };
+  private refreshWorker: NodeWorker | Worker | undefined;
   private thumbnailWorkers = 0;
   private readonly thumbnailWaiters: Array<() => void> = [];
   private warmupQueue: Array<{ id: string; key: string }> = [];
@@ -73,6 +78,8 @@ export class QuestionAdminService {
     mkdirSync(this.questionDataDirectory, { recursive: true });
     mkdirSync(this.questionTrashDirectory, { recursive: true });
     mkdirSync(this.thumbnailDirectory, { recursive: true });
+    const revisionPath = join(this.thumbnailDirectory, "revision");
+    if (existsSync(revisionPath)) this.refreshStatus.revision = Number(readFileSync(revisionPath, "utf8")) || 0;
   }
 
   list() {
@@ -127,9 +134,98 @@ export class QuestionAdminService {
     return { total: progress?.keys.size ?? 0, ready: progress?.ready.size ?? 0, failed: progress?.failed.size ?? 0 };
   }
 
+  getThumbnailRefreshStatus(): ThumbnailRefreshStatus { return { ...this.refreshStatus }; }
+
+  subscribeThumbnailRefresh(listener: (status: ThumbnailRefreshStatus) => void): () => void {
+    this.refreshListeners.add(listener);
+    listener(this.getThumbnailRefreshStatus());
+    return () => this.refreshListeners.delete(listener);
+  }
+
+  startThumbnailRefresh(): ThumbnailRefreshStatus {
+    if (this.refreshStatus.state === "running") throw new Error("缩略图刷新正在进行中");
+    const items = this.readCatalogue().flatMap(({ id }) => {
+      try {
+        const info = this.readJsonCached(this.questionPath(id), (raw) => questionRecordSchema.parse(raw));
+        const key = this.thumbnailKey(id, info);
+        return key && info.question ? [{ id, key, info }] : [];
+      } catch { return []; }
+    });
+    if (this.warmupTimer) clearTimeout(this.warmupTimer);
+    this.warmupTimer = undefined;
+    this.warmupQueue = [];
+    this.refreshStatus = { ...this.refreshStatus, state: "running", total: items.length, processed: 0, failed: 0, error: undefined };
+    this.emitThumbnailRefresh();
+    // Detached from the HTTP response: one worker thread remains active when the page closes.
+    this.refreshThumbnails(items);
+    return this.getThumbnailRefreshStatus();
+  }
+
+  private refreshThumbnails(items: Array<{ id: string; key: string; info: QuestionRecord }>): void {
+    const workerItems = items.map(({ key, info }) => ({
+      key, source: this.imagePath(info.originalImage), target: join(this.thumbnailDirectory, `${key}.webp`), crop: info.question!,
+    }));
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      this.refreshWorker = undefined;
+      this.refreshStatus.failed += items.length - this.refreshStatus.processed;
+      this.refreshStatus.processed = items.length;
+      try {
+        const revision = Date.now();
+        writeFileSync(join(this.thumbnailDirectory, "revision"), String(revision));
+        this.refreshStatus = { ...this.refreshStatus, state: this.refreshStatus.error ? "failed" : "completed", revision };
+      } catch {
+        this.refreshStatus = { ...this.refreshStatus, state: "failed", error: "刷新结果未能保存", failed: this.refreshStatus.failed + 1 };
+      }
+      this.emitThumbnailRefresh();
+    };
+    try {
+      const onMessage = (message: { key: string; ok: boolean } | { done: true }) => {
+        if (finished) return;
+        if ("done" in message) { finish(); return; }
+        if (message.ok) this.markThumbnailReady(message.key);
+        else {
+          this.refreshStatus.failed += 1;
+          if (!existsSync(join(this.thumbnailDirectory, `${message.key}.webp`))) this.markThumbnailFailed(message.key);
+        }
+        this.refreshStatus.processed += 1;
+        this.emitThumbnailRefresh();
+      };
+      if ((globalThis as { Bun?: unknown }).Bun) {
+        const worker = new globalThis.Worker("./server/dist/admin/thumbnailRefreshWorker.js");
+        this.refreshWorker = worker;
+        worker.onmessage = (event) => {
+          const message = event.data as { key: string; ok: boolean } | { done: true };
+          onMessage(message);
+          if ("done" in message) worker.terminate();
+        };
+        worker.onerror = (event) => { this.refreshStatus.error = event.message; finish(); };
+        worker.addEventListener("close", finish);
+        worker.postMessage(workerItems);
+      } else {
+        const worker = new NodeWorker(new URL("./thumbnailRefreshWorker.js", import.meta.url));
+        this.refreshWorker = worker;
+        worker.on("message", onMessage);
+        worker.on("error", (error) => { this.refreshStatus.error = error.message; finish(); });
+        worker.on("exit", finish);
+        worker.postMessage(workerItems);
+      }
+    } catch (error) {
+      this.refreshStatus.error = error instanceof Error ? error.message : "工作线程启动失败";
+      finish();
+    }
+  }
+
+  private emitThumbnailRefresh(): void {
+    const status = this.getThumbnailRefreshStatus();
+    for (const listener of this.refreshListeners) listener(status);
+  }
+
   private topicThumbnailUrl(id: string, info: QuestionRecord): string | null {
     const key = this.thumbnailKey(id, info);
-    return key ? `/api/admin/questions/${encodeURIComponent(id)}/thumbnail?v=${key}` : null;
+    return key ? `/api/admin/questions/${encodeURIComponent(id)}/thumbnail?v=${key}&r=${this.refreshStatus.revision}` : null;
   }
 
   private thumbnailKey(id: string, info: QuestionRecord): string | null {
@@ -146,7 +242,7 @@ export class QuestionAdminService {
     const ready = new Set<string>();
     const failed = new Set<string>();
     this.warmupQueue = previews.flatMap(({ id, thumbnailUrl }) => {
-      const key = thumbnailUrl?.split("?v=")[1];
+      const key = thumbnailUrl ? new URL(thumbnailUrl, "http://localhost").searchParams.get("v") : null;
       if (!key) return [];
       keys.add(key);
       if (existsSync(join(this.thumbnailDirectory, `${key}.webp`))) { ready.add(key); return []; }
@@ -181,7 +277,7 @@ export class QuestionAdminService {
   }
 
   private async warmNextThumbnail(): Promise<void> {
-    if (this.warmupRunning || this.thumbnailWorkers > 0 || this.thumbnailWaiters.length) {
+    if (this.refreshStatus.state === "running" || this.warmupRunning || this.thumbnailWorkers > 0 || this.thumbnailWaiters.length) {
       this.queueWarmup(750);
       return;
     }

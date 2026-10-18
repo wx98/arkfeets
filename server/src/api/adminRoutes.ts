@@ -91,6 +91,21 @@ export function createAdminRoutes(sessions: AdminSessionManager, questions: Ques
   router.get("/topics", (_request, response) => run(response, () => questions.listTopics()));
   router.get("/topics/:id/questions", (request, response) => run(response, () => questions.listTopicQuestions(String(request.params.id))));
   router.get("/topics/:id/thumbnail-progress", (request, response) => run(response, () => questions.getTopicThumbnailProgress(String(request.params.id))));
+  router.get("/thumbnails/refresh", (_request, response) => run(response, () => questions.getThumbnailRefreshStatus()));
+  router.post("/thumbnails/refresh", (_request, response) => run(response, () => questions.startThumbnailRefresh()));
+  router.get("/thumbnails/refresh/stream", (_request, response) => {
+    response.setHeader("Content-Type", "text/event-stream");
+    response.setHeader("Cache-Control", "no-cache, no-transform");
+    response.setHeader("Connection", "keep-alive");
+    response.flushHeaders();
+    const release = questions.subscribeThumbnailRefresh((status) => {
+      if (!response.destroyed) response.write(`data: ${JSON.stringify(status)}\n\n`);
+    });
+    const keepalive = setInterval(() => {
+      if (!response.destroyed) response.write(": keepalive\n\n");
+    }, 20_000);
+    response.on("close", () => { clearInterval(keepalive); release(); });
+  });
   router.get("/questions/:id/thumbnail", async (request, response) => {
     try {
       const image = await questions.getQuestionThumbnail(String(request.params.id));

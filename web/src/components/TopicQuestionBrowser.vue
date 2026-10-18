@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
-import { LayoutGrid, Search } from "lucide-vue-next";
+import { LayoutGrid, RefreshCw, Search } from "lucide-vue-next";
 import { useRouter } from "vue-router";
 import type { CropRect } from "../types";
 import TopicQuestionThumbnail from "./TopicQuestionThumbnail.vue";
@@ -16,7 +16,13 @@ export interface TopicQuestionPreview {
   enabled: boolean;
 }
 
-const props = defineProps<{ questions: TopicQuestionPreview[]; loading: boolean; error: string; progress: { total: number; ready: number; failed: number } | null }>();
+const props = defineProps<{
+  questions: TopicQuestionPreview[]; loading: boolean; error: string;
+  progress: { total: number; ready: number; failed: number } | null;
+  refreshStatus: { state: "idle" | "running" | "completed" | "failed"; total: number; processed: number; failed: number; error?: string } | null;
+  refreshBusy: boolean;
+}>();
+const emit = defineEmits<{ refresh: [] }>();
 const router = useRouter();
 type ViewMode = "extra" | "large" | "medium" | "small" | "list" | "details" | "tiles" | "content";
 const modes: { value: ViewMode; label: string }[] = [
@@ -53,7 +59,10 @@ const filtered = computed(() => {
   const needle = normalize(search.value);
   return needle ? props.questions.filter((question) => normalize([question.title, ...question.tags].join(" ")).includes(needle)) : props.questions;
 });
-const progressPercent = computed(() => props.progress?.total ? Math.round(props.progress.ready / props.progress.total * 100) : 100);
+const displayProgress = computed(() => props.refreshStatus && props.refreshStatus.state !== "idle"
+  ? { total: props.refreshStatus.total, ready: props.refreshStatus.processed, failed: props.refreshStatus.failed, label: props.refreshStatus.state === "running" ? "全库刷新中" : props.refreshStatus.state === "failed" ? "全库刷新中断" : "全库刷新完成" }
+  : { total: props.progress?.total ?? 0, ready: props.progress?.ready ?? 0, failed: props.progress?.failed ?? 0, label: "缩略图计算" });
+const progressPercent = computed(() => displayProgress.value.total ? Math.round(displayProgress.value.ready / displayProgress.value.total * 100) : 100);
 function normalize(value: string) { return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, ""); }
 function changeMode(event: Event) {
   mode.value = (event.target as HTMLSelectElement).value as ViewMode;
@@ -79,9 +88,12 @@ onBeforeUnmount(hidePreview);
   <section class="topic-browser" aria-label="主题题目">
     <header class="topic-browser__toolbar">
       <div class="topic-browser__title"><strong>主题题目</strong><span>{{ filtered.length }} / {{ questions.length }}</span></div>
-      <div v-if="progress?.total" class="topic-browser__progress" role="progressbar" :aria-label="`缩略图计算 ${progress.ready} / ${progress.total}`" :aria-valuenow="progress.ready" aria-valuemin="0" :aria-valuemax="progress.total">
-        <div><span>缩略图计算 {{ progress.ready }} / {{ progress.total }}</span><span v-if="progress.failed" class="topic-browser__progress-error">失败 {{ progress.failed }}</span><span v-else>{{ progressPercent }}%</span></div>
-        <span class="topic-browser__progress-track"><span :style="{ width: `${progressPercent}%` }" /></span>
+      <div class="topic-browser__progress-group">
+        <div class="topic-browser__progress" role="progressbar" :title="refreshStatus?.error" :aria-label="`${displayProgress.label} ${displayProgress.ready} / ${displayProgress.total}`" :aria-valuenow="displayProgress.ready" aria-valuemin="0" :aria-valuemax="displayProgress.total || 1">
+          <div><span>{{ displayProgress.label }} {{ displayProgress.ready }} / {{ displayProgress.total }}</span><span v-if="displayProgress.failed" class="topic-browser__progress-error">失败 {{ displayProgress.failed }}</span><span v-else>{{ progressPercent }}%</span></div>
+          <span class="topic-browser__progress-track"><span :style="{ width: `${progressPercent}%` }" /></span>
+        </div>
+        <button class="topic-browser__refresh" type="button" title="重新生成全部缩略图缓存" aria-label="重新生成全部缩略图缓存" :disabled="refreshBusy || refreshStatus?.state === 'running'" @click="emit('refresh')"><RefreshCw :size="17" :class="{ 'topic-browser__spin': refreshStatus?.state === 'running' }" /></button>
       </div>
       <label class="topic-browser__search"><Search :size="16" /><input v-model="search" type="search" placeholder="搜索题目名称或标签" aria-label="搜索题目名称或标签" /></label>
       <label class="topic-browser__mode"><LayoutGrid :size="16" /><select :value="mode" aria-label="题目视图" @change="changeMode"><option v-for="item in modes" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
@@ -115,7 +127,7 @@ onBeforeUnmount(hidePreview);
 .topic-browser { min-height: 0; display: flex; flex: 1; flex-direction: column; border-top: 1px solid #c8d0c8; background: #f8faf7; }
 .topic-browser__toolbar { display: flex; align-items: center; gap: 10px; padding: 11px 18px; border-bottom: 1px solid #d3dad3; background: #fff; }
 .topic-browser__title { display: flex; align-items: baseline; gap: 9px; margin-right: auto; white-space: nowrap; }.topic-browser__title strong { font-size: 14px; }.topic-browser__title span { color: #707a72; font-size: 11px; }
-.topic-browser__progress { width: 168px; flex: 0 0 168px; display: grid; gap: 4px; color: #59655c; font-size: 10px; }.topic-browser__progress > div { display: flex; justify-content: space-between; gap: 6px; white-space: nowrap; }.topic-browser__progress-error { color: #ad5f35; }.topic-browser__progress-track { height: 5px; overflow: hidden; background: #dce4d8; }.topic-browser__progress-track > span { display: block; height: 100%; background: #90ac34; transition: width .25s ease; }
+.topic-browser__progress-group { display: flex; align-items: center; gap: 6px; }.topic-browser__progress { width: 168px; flex: 0 0 168px; display: grid; gap: 4px; color: #59655c; font-size: 10px; }.topic-browser__progress > div { display: flex; justify-content: space-between; gap: 6px; white-space: nowrap; }.topic-browser__progress-error { color: #ad5f35; }.topic-browser__progress-track { height: 5px; overflow: hidden; background: #dce4d8; }.topic-browser__progress-track > span { display: block; height: 100%; background: #90ac34; transition: width .25s ease; }.topic-browser__refresh { width: 32px; height: 32px; flex: 0 0 32px; display: grid; place-items: center; border: 1px solid #b8c3b8; color: #43563a; background: #f6faed; cursor: pointer; }.topic-browser__refresh:hover:not(:disabled) { border-color: #7b9c37; background: #e7f4cf; }.topic-browser__spin { animation: topic-browser-spin 1.2s linear infinite; }@keyframes topic-browser-spin { to { transform: rotate(360deg); } }
 .topic-browser__search, .topic-browser__mode { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid #b8c3b8; color: #58635a; background: #fff; }
 .topic-browser__search { width: min(280px, 38%); }.topic-browser__search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 12px; }.topic-browser__mode select { max-width: 115px; border: 0; outline: 0; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .topic-browser__body { min-height: 0; flex: 1; overflow: auto; padding: 16px 18px 26px; }.topic-browser__empty, .topic-browser__error { margin: 25px 0; color: #68736c; font-size: 13px; }.topic-browser__error { color: #a83f35; }
@@ -131,6 +143,6 @@ onBeforeUnmount(hidePreview);
 .topic-browser-preview { position: fixed; z-index: 100; display: grid; place-items: center; overflow: hidden; border: 3px solid var(--signal); background-color: #f2f4f3; background-image: conic-gradient(#d5d9d7 25%, #f2f4f3 0 50%, #d5d9d7 0 75%, #f2f4f3 0); background-size: 18px 18px; box-shadow: 8px 8px 0 rgba(0,0,0,.35); pointer-events: none; }
 .topic-browser-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
 @media (hover: none) { .topic-browser-preview { display: none; } }
-@media (max-width: 1050px) { .topic-browser__toolbar { flex-wrap: wrap; }.topic-browser__title { flex: 1 1 140px; margin-right: 0; }.topic-browser__progress { flex: 1 1 168px; }.topic-browser__search { flex: 1 1 190px; width: auto; } }
-@media (max-width: 740px) { .topic-browser__toolbar { flex-wrap: wrap; }.topic-browser__title { width: 100%; }.topic-browser__progress { flex: 1 1 100%; width: 100%; }.topic-browser__search { flex: 1; width: auto; }.topic-browser__columns, .topic-browser__items--details .topic-browser__item { grid-template-columns: minmax(110px,2fr) minmax(80px,1fr) 55px; }.topic-browser__columns span:nth-child(3), .topic-browser__items--details .topic-browser__source { display: none; }.topic-browser__items--details .topic-browser__status { display: block; } }
+@media (max-width: 1050px) { .topic-browser__toolbar { flex-wrap: wrap; }.topic-browser__title { flex: 1 1 140px; margin-right: 0; }.topic-browser__search { flex: 1 1 190px; width: auto; } }
+@media (max-width: 740px) { .topic-browser__toolbar { flex-wrap: wrap; }.topic-browser__title { width: 100%; }.topic-browser__progress-group { flex: 1 1 100%; }.topic-browser__progress { flex: 1; width: auto; }.topic-browser__search { flex: 1; width: auto; }.topic-browser__columns, .topic-browser__items--details .topic-browser__item { grid-template-columns: minmax(110px,2fr) minmax(80px,1fr) 55px; }.topic-browser__columns span:nth-child(3), .topic-browser__items--details .topic-browser__source { display: none; }.topic-browser__items--details .topic-browser__status { display: block; } }
 </style>

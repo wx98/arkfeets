@@ -1,23 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { PNG } from "pngjs";
-import type { QuestionRecord } from "../question/questionRepository.js";
 
-type ImageCodec = {
-  Image: new (input: Buffer) => {
-    png: () => { buffer: () => Promise<Buffer> };
-    webp: (options: { quality: number }) => { buffer: () => Promise<Buffer> };
-  };
-};
-
-function bunCodec(): ImageCodec | undefined {
-  return (globalThis as typeof globalThis & { Bun?: ImageCodec }).Bun;
-}
-
-export async function renderQuestionThumbnail(
-  source: string,
-  crop: NonNullable<QuestionRecord["question"]>,
-): Promise<Buffer> {
-  const codec = bunCodec();
+/** @param {string} source @param {import("../question/questionRepository.js").QuestionRecord["question"] & {}} crop */
+export async function renderQuestionThumbnail(source, crop) {
+  const codec = globalThis.Bun;
   const input = await readFile(source);
   const pngBytes = codec
     ? await new codec.Image(input).png().buffer()

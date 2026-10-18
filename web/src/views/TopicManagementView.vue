@@ -6,6 +6,7 @@ import TopicQuestionBrowser, { type TopicQuestionPreview } from "../components/T
 
 interface Topic { id: string; name: string; isDefault: boolean; questionCount: number }
 interface ThumbnailProgress { total: number; ready: number; failed: number }
+interface ThumbnailRefreshStatus { state: "idle" | "running" | "completed" | "failed"; total: number; processed: number; failed: number; revision: number; error?: string }
 const router = useRouter();
 const checking = ref(true);
 const authenticated = ref(false);
@@ -21,8 +22,12 @@ const questions = ref<TopicQuestionPreview[]>([]);
 const questionsLoading = ref(false);
 const questionsError = ref("");
 const thumbnailProgress = ref<ThumbnailProgress | null>(null);
+const refreshStatus = ref<ThumbnailRefreshStatus | null>(null);
+const refreshBusy = ref(false);
 let questionRequest = 0;
 let progressTimer: ReturnType<typeof setInterval> | undefined;
+let refreshStream: EventSource | undefined;
+let lastAppliedRevision = 0;
 const selected = computed(() => topics.value.find((topic) => topic.id === selectedId.value));
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -83,18 +88,47 @@ async function refreshThumbnailProgress(topicId: string, requestId: number): Pro
   }
 }
 
+function connectRefreshStream() {
+  refreshStream?.close();
+  refreshStream = new EventSource("/api/admin/thumbnails/refresh/stream");
+  refreshStream.onmessage = (event) => {
+    const status = JSON.parse(event.data) as ThumbnailRefreshStatus;
+    refreshStatus.value = status;
+    if ((status.state === "completed" || status.state === "failed") && status.revision !== lastAppliedRevision) {
+      lastAppliedRevision = status.revision;
+      const topicId = selectedId.value;
+      const requestId = questionRequest;
+      if (topicId) void request<TopicQuestionPreview[]>(`/api/admin/topics/${encodeURIComponent(topicId)}/questions`)
+        .then((result) => { if (requestId === questionRequest) questions.value = result; })
+        .catch((cause) => { questionsError.value = cause instanceof Error ? cause.message : "题目读取失败"; });
+    }
+  };
+}
+
+async function startThumbnailRefresh() {
+  refreshBusy.value = true;
+  error.value = "";
+  try {
+    refreshStatus.value = await request<ThumbnailRefreshStatus>("/api/admin/thumbnails/refresh", { method: "POST" });
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : "缩略图刷新失败"; }
+  finally { refreshBusy.value = false; }
+}
+
 
 onMounted(async () => {
   try {
     await request("/api/admin/session");
     authenticated.value = true;
     await loadTopics();
+    refreshStatus.value = await request<ThumbnailRefreshStatus>("/api/admin/thumbnails/refresh");
+    lastAppliedRevision = refreshStatus.value.revision;
+    connectRefreshStream();
   } catch (cause) {
     if (authenticated.value) error.value = cause instanceof Error ? cause.message : "主题列表读取失败";
   }
   finally { checking.value = false; }
 });
-onBeforeUnmount(() => { if (progressTimer) clearInterval(progressTimer); });
+onBeforeUnmount(() => { if (progressTimer) clearInterval(progressTimer); refreshStream?.close(); });
 
 async function login() {
   busy.value = true; error.value = "";
@@ -104,6 +138,9 @@ async function login() {
     password.value = "";
     authenticated.value = true;
     await loadTopics();
+    refreshStatus.value = await request<ThumbnailRefreshStatus>("/api/admin/thumbnails/refresh");
+    lastAppliedRevision = refreshStatus.value.revision;
+    connectRefreshStream();
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "登录失败"; }
   finally { busy.value = false; }
 }
@@ -187,7 +224,7 @@ async function deleteTopic() {
           <p v-if="message" class="topic-page__message" role="status">{{ message }}</p>
           <p v-if="error" class="topic-page__error" role="alert">{{ error }}</p>
         </div>
-        <TopicQuestionBrowser :questions="questions" :loading="questionsLoading" :error="questionsError" :progress="thumbnailProgress" />
+        <TopicQuestionBrowser :questions="questions" :loading="questionsLoading" :error="questionsError" :progress="thumbnailProgress" :refresh-status="refreshStatus" :refresh-busy="refreshBusy" @refresh="startThumbnailRefresh" />
       </section>
       <section v-else class="topic-detail"><p v-if="error" class="topic-page__error" role="alert">{{ error }}</p></section>
     </div>

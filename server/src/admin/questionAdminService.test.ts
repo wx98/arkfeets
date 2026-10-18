@@ -141,7 +141,8 @@ describe("QuestionAdminService", () => {
     expect(first.toString("ascii", 8, 12)).toBe("WEBP");
     expect(first.length).toBeLessThan(20_000);
     expect(await service.getQuestionThumbnail("existing")).toEqual(first);
-    expect(readFileSync(join(rootDirectory, "tmp", "topic-thumbnails", `${service.listTopicQuestions("脚")[0].thumbnailUrl?.split("v=")[1]}.webp`))).toEqual(first);
+    const key = new URL(service.listTopicQuestions("脚")[0].thumbnailUrl!, "http://localhost").searchParams.get("v");
+    expect(readFileSync(join(rootDirectory, "tmp", "topic-thumbnails", `${key}.webp`))).toEqual(first);
     await expect(service.getQuestionThumbnail("missing")).rejects.toThrow("题目不存在");
     const oldUrl = service.listTopicQuestions("脚")[0].thumbnailUrl;
     service.updateQuestion("existing", { ...validInput(["新答案"]), title: "新标题", hint: "新提示", tags: ["新标签"] });
@@ -152,6 +153,40 @@ describe("QuestionAdminService", () => {
     expect(service.getTopicThumbnailProgress("脚")).toEqual({ total: 1, ready: 0, failed: 0 });
     expect(await service.getQuestionThumbnail("existing")).not.toEqual(first);
     expect(service.getTopicThumbnailProgress("脚")).toEqual({ total: 1, ready: 1, failed: 0 });
+  });
+
+  it("refreshes every thumbnail sequentially and publishes progress without changing records", async () => {
+    const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP4z8DAAMIM////ZwAAHu8E/KPItPcAAAAASUVORK5CYII=", "base64");
+    writeFileSync(join(rootDirectory, "full_data", "existing.png"), image);
+    writeFileSync(join(rootDirectory, "full_data", "new.png"), image);
+    const service = createService();
+    const topic = service.createTopic("第二主题");
+    service.createQuestion({ ...validInput(["答案"], "new.png"), title: "另一题", topic: [topic.id], enabled: false });
+    const beforeRecord = readFileSync(join(rootDirectory, "question_data", "existing.json"), "utf8");
+    const beforeUrl = service.listTopicQuestions("脚")[0].thumbnailUrl;
+    const key = new URL(beforeUrl!, "http://localhost").searchParams.get("v");
+    const path = join(rootDirectory, "tmp", "topic-thumbnails", `${key}.webp`);
+    writeFileSync(path, "stale cache");
+    const otherKey = new URL(service.listTopicQuestions(topic.id)[0].thumbnailUrl!, "http://localhost").searchParams.get("v");
+    const otherPath = join(rootDirectory, "tmp", "topic-thumbnails", `${otherKey}.webp`);
+    writeFileSync(otherPath, "stale cache");
+    const updates: number[] = [];
+    const completed = new Promise<void>((resolve) => {
+      const release = service.subscribeThumbnailRefresh((status) => {
+        updates.push(status.processed);
+        if (status.state === "completed") { release(); resolve(); }
+      });
+    });
+    expect(service.startThumbnailRefresh()).toMatchObject({ state: "running", total: 2, processed: 0 });
+    expect(() => service.startThumbnailRefresh()).toThrow("正在进行中");
+    await completed;
+    expect(updates).toContain(1);
+    expect(updates).toContain(2);
+    expect(service.getThumbnailRefreshStatus()).toEqual({ state: "completed", total: 2, processed: 2, failed: 0, revision: expect.any(Number), error: undefined });
+    expect(readFileSync(path).toString("ascii", 0, 4)).toBe("RIFF");
+    expect(readFileSync(otherPath).toString("ascii", 0, 4)).toBe("RIFF");
+    expect(service.listTopicQuestions("脚")[0].thumbnailUrl).not.toBe(beforeUrl);
+    expect(readFileSync(join(rootDirectory, "question_data", "existing.json"), "utf8")).toBe(beforeRecord);
   });
 
   it("counts failed thumbnail renders separately from completed ones", async () => {

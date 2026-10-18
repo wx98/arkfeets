@@ -58,9 +58,9 @@ npm start
 
 ### Windows 便携发布包
 
-在 Windows 构建机安装好 Node.js、Python 3 和 Pillow 后运行 `npm run package:win`。脚本使用淘宝镜像准备生产依赖，生成 `release/` 下的便携目录及同名 ZIP。发布包内含 Node.js、Python/Pillow、前后端构建结果和当前 `server/config.json`，但**不包含题目、原图及已有对局日志**；使用方无需再安装运行环境。
+在开发电脑双击根目录的 `package.bat`，或运行 `npm run package:win`。打包会先编译前后端，再使用淘宝镜像准备生产依赖，生成 `release/` 下的生产目录及同名 ZIP。构建电脑需要已有 Node.js、Python 3 和 Pillow；**使用发布包的电脑无需安装 Node.js、Python、npm 或其他依赖**，所需运行时已随包携带。发布包不包含前后端开发源码、题目、原图及已有对局日志。
 
-解压 ZIP 后双击 `start.cmd`，健康检查通过后自动打开浏览器；双击 `stop.cmd` 只停止本发布包启动的服务。默认端口是 3000，后台日志在 `.runtime/`。首次启动后，通过后台的题库导入功能迁移题目和原图；新对局日志写入 `server/logs/games`。发布前检查配置中的密码和直播间信息，不要把包含敏感配置的 ZIP 公开分发。
+解压 ZIP 后双击 `start.cmd`，它会用随包 Node.js 拉起服务，健康检查通过后自动打开浏览器，并留在结果窗口；关闭这个窗口不会停止服务。双击 `stop.cmd` 只停止本发布包启动的服务，也会留窗显示结果。默认端口是 3000，后台日志在 `.runtime/`。首次启动后，通过后台的题库导入功能迁移题目和原图；新对局日志写入 `server/logs/games`。发布前检查随包 `server/config.json` 中的密码和直播间信息，不要把包含敏感配置的 ZIP 公开分发。
 
 可用环境变量：
 

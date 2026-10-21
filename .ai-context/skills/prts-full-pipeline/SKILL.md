@@ -1,123 +1,75 @@
 ---
 name: prts-full-pipeline
-description: 明日方舟 PRTS 猜谜游戏数据全量/增量生产流水线主控 skill（自包含，scripts/ 内置全部 4 个 Python 脚本）：立绘爬取 → 干员基础信息 → 干员档案 → 信息 JSON → AI hint → 平铺交付 arkfeets（png/json/wikitext）。支持指定干员名的增量补齐。This skill should be used when 用户要求整体重跑数据管线、指定干员名补齐数据、新干员入库、或将全部操作串成可复用流程时。
+description: 从 PRTS 补抓明日方舟立绘、基础资料和档案，生成 AI 猜图提示及同名信息 JSON，校验后交付 arkfeets 题库。可删除的过程数据在 tmp/Arknights_PRTS，可提交的中间交付物在 .ai-context。
 agent_created: true
 ---
 
-# PRTS 数据流水线（主控）
+# PRTS 干员数据流水线
 
-这是 arknights_scraper 项目的**目标操作全集**，按固定顺序执行 6 个阶段。每个阶段的详细参数、踩坑记录在 4 个子 skill 中，本 skill 只做编排与验收；遇到失败先去对应子 skill 查坑。
+这是 `.ai-context/skills` 中唯一的 PRTS skill。按需执行：立绘 → 基础信息 → 档案 → AI hint → 图片同名 JSON → 交付。游戏运行、题目裁切与本流水线互不依赖；交付资源不会自动创建题目。
 
-## 脚本位置（本 skill 自包含）
+## 路径与边界
 
-全部 4 个 Python 脚本封装在本 skill 的 `../../../scripts` 目录，是**唯一权威副本**（项目根目录不再放脚本）：
+- 从本文件向下使用 `scripts/`；脚本通过 `prts_paths.py` 定位仓库，不依赖当前工作目录。
+- **可删除的过程目录**：仓库根目录 `tmp/Arknights_PRTS/`。`operators/<干员>/*.png|*.txt|*.json` 是工作副本；`hint_batches/`、CSV、失败列表、调试页、Edge 配置及 Python/Selenium 临时文件也在这里。
+- **可提交的中间交付目录**：`.ai-context/`。`wiki_cache/*.wikitext` 保留 wiki 原文，`prts_operators.json` 和 `hints_merged.json` 保留审核后的基础资料与 AI 提示。它们不随 `tmp/` 清理，可提交到 Git。
+- `tmp/` 被 Git 忽略；仅在完成交付与核对后清理。若还需重新生成 JSON 或补抓图片，先备份工作副本。
+- **唯一交付目录**：`server/resource/full_data/`，只平铺最终 PNG、同名 JSON 和 wikitext。`server/resource/catalogue.json` 与 `question_data/` 由游戏后台维护，不由本流水线改写。
+- 使用 `python -B` 运行脚本；脚本也禁止在源码目录生成 `__pycache__`，并把 Selenium Manager 与 Edge 的工作路径指定到过程目录。安装 Python 包及浏览器自身的系统级管理行为不属于本项目文件输出。
 
-```
-.workbuddy/skills/prts-full-pipeline/
-├── SKILL.md
-└── scripts/
-    ├── arknights_scraper_edge.py   # 阶段① 立绘爬取（Edge + Selenium + 单线程）
-    ├── prts_operator_info.py       # 阶段② 干员基础信息（wikitext 解析）
-    ├── prts_fetch_archives.py      # 阶段③ 干员档案（wiki_cache 缓存）
-    └── prts_generate_info.py       # 阶段④ 信息 JSON 生成
-```
-
-脚本内置 `_find_project_root()`：从脚本位置向上查找含 `Arknights_PRTS` 的目录作为数据根，因此**在任意 cwd 下运行都能正确定位数据**，产物仍写到项目根（Arknights_PRTS/、prts_operators.json、wiki_cache/ 等）。
-
-| 阶段 | 脚本（均在 scripts/ 下） | 产物 | 细节 skill |
-|------|------|------|-----------|
-| ① 立绘爬取 | `arknights_scraper_edge.py` | `Arknights_PRTS/<干员>/*.png` | prts-artwork-scraper |
-| ② 基础信息 | `prts_operator_info.py` | `../../prts_operators.json` | prts-wiki-scraper |
-| ③ 档案抓取 | `prts_fetch_archives.py` | `<干员>/<干员>.txt` + `wiki_cache/` | prts-wiki-scraper |
-| ④ 信息 JSON | `prts_generate_info.py` | 每张 PNG 同名 `.json` | prts-guess-game-data |
-| ⑤ AI hint | 30 批 lite agent 并行 | `../../hints_merged.json` → 回写 ④ | prts-batch-hint-agents |
-| ⑥ 交付 | 内嵌拷贝逻辑 | `arkfeets/server/resource/full_data`（平铺） | prts-guess-game-data |
-
-## 环境前提（硬性）
-
-- Python 用 `D:\Program Files\python\Python313\python.exe`（系统版，有 requests/bs4/selenium）；托管版无第三方库。
-- bash 下所有输出先包装 UTF-8 stdout，否则中文干员名乱码。
-- 爬取阶段会被 prts.wiki WAF 限流：请求间隔 ≥0.8s，403/429 指数退避；`action=raw` 优先走 `wiki_cache/` 缓存。
-
-## 场景 A：全量重建（从零或换数据源）
+以下命令在项目根目录运行（PowerShell）：
 
 ```powershell
-cd D:\workspace\IdeaProjects\arknights_scraper
-$D = "D:\Program Files\python\Python313\python.exe"
-$S = ".workbuddy\skills\prts-full-pipeline\scripts"
-
-# ① 立绘（需本机 Edge，耗时 ~40min，单线程 0.5s 间隔，失败落 failed_urls.txt）
-& $D "$S\arknights_scraper_edge.py"
-
-# ② 基础信息（默认名单=Arknights_PRTS 文件夹名，~8min）
-& $D "$S\prts_operator_info.py" --interval 0.8
-
-# ③ 档案（有 wiki_cache 缓存，重跑秒级；全新 ~8min）
-& $D "$S\prts_fetch_archives.py" --interval 0.8
-
-# ④+⑤ hint 缺失时先跑 AI hint 批次（见子 skill），再生成 JSON
-& $D "$S\prts_generate_info.py"
-
-# ⑥ 交付（平铺拷贝到 arkfeets，脚本见下）
+$S = '.ai-context/skills/prts-full-pipeline/scripts'
+python -B "$S/arknights_scraper_edge.py"
+python -B "$S/prts_operator_info.py" --interval 0.8
+python -B "$S/prts_fetch_archives.py" --interval 0.8
+python -B "$S/prts_generate_info.py"
+python -B "$S/prts_deliver.py" --dry-run
+python -B "$S/prts_deliver.py"
 ```
 
-## 场景 B：指定干员增量补齐（用户给干员名，补齐全部内容）
+需要 `requests`、`beautifulsoup4`、`tqdm`、`selenium` 和本机 Edge/EdgeDriver；信息和档案抓取不需要 Selenium。PRTS 限流时增大间隔，不要并发抓图。
 
-**触发**：用户指定一个或多个干员名称（新干员入库、或某个干员数据缺失/过期需补齐）。
+## 立绘抓取
 
-**输入**：干员名列表（如 `电弧,Mon3tr`）。
+`arknights_scraper_edge.py` 使用 Edge 读取 PRTS 图片搜索分页，用 `requests.Session` 顺序下载；已有 PNG 跳过，下载间隔 0.5 秒、失败最多重试 5 次并退避。文件名为 `<干员>.png`、`<干员> 1.png`、`<干员> 2.png`、`<干员> skinN.png` 等；预备干员跳过。失败列表在 `tmp/Arknights_PRTS/failed_urls.txt`，页面结构异常时调试 HTML 也写在此目录。
 
-**执行顺序**（每步完成后验证再进下一步）：
+该脚本目前只支持全量扫描，**没有单干员抓图参数**。少量新干员可以将有权使用的 PNG 放进 `operators/<干员>/`；多名新干员再重跑全量扫描，已有图会跳过。验收 PNG 数、跨文件夹同名、文件大小和失败列表；源站确有不同文件名但内容相同的立绘，不能仅凭哈希相同删除。
 
-```powershell
-$D = "D:\Program Files\python\Python313\python.exe"
-$S = ".workbuddy\skills\prts-full-pipeline\scripts"
-```
+## 基础信息与档案
 
-1. **立绘**：`Arknights_PRTS/<干员名>/` 不存在则创建。
-   - 首选：重跑阶段① 全量扫描（~40min，已下载的会自动跳过，适合新干员较多时）；
-   - 干员少时也可手工把 PNG 放入文件夹，命名遵循 `<干员名>.png` / `<干员名> 1.png`（精一）/ `<干员名> 2.png`（精二）/ `<干员名> skin<N>.png`（皮肤）。
-   - ⚠️ 当前 `arknights_scraper_edge.py` 不支持单干员模式，只有全量扫描；如需单干员定向抓图，先扩展脚本再加 `--names` 参数（改脚本即改本 skill 的 scripts/ 副本）。
-2. **基础信息**：`& $D "$S\prts_operator_info.py" --names <干员名列表> --interval 0.8`
-   - 注意：该脚本默认 **覆盖** `../../prts_operators.json`。增量跑时用 `--output-prefix` 输出到临时文件（如 `patch_ops`），再合并进主 `../../.ai-context/prts_operators.json`（按"名称"字段 upsert），避免清空其他干员记录。
-3. **档案**：`& $D "$S\prts_fetch_archives.py" --names <干员名列表> --interval 0.8`
-   - 产出 `<干员>/<干员>.txt` 与 `wiki_cache/<干员>.wikitext`；wiki 无此页时进 `prts_archives_failed.txt`，确认是否为已知例外类型（非干员条目/变体名）。
-4. **AI hint**：为这批干员单独起 1 个 lite agent（人数>15 时才分批），读档案写 ≤30 字提示（禁含代号），合并进 `../../hints_merged.json`（按干员名 upsert）。
-5. **信息 JSON**：`& $D "$S\prts_generate_info.py"` 全量重跑（秒级、幂等，无需单干员模式）。
-6. **交付**：重跑阶段⑥（幂等拷贝，只会新增/更新该干员的文件）。
+PRTS 侧栏经 JS 渲染，脚本直接读取 `https://prts.wiki/index.php?title=<干员名>&action=raw` 的 wikitext。`prts_operator_info.py` 解析星级、职业、分支等字段；星级为内部稀有度加一。默认名单是 `operators/` 下的文件夹名；支持 `--names 电弧,令` 或 `--names-file <文件>`。默认 JSON 写到 `.ai-context/prts_operators.json`；CSV、失败名单及自定义 `--output-prefix` 的试运行结果留在过程目录。**增量时使用 `--merge`**，按“名称”更新已有记录，避免只抓一个人却覆盖全表。
 
-**增量验收**：该干员文件夹下 PNG/JSON/txt 三件齐全；`../../prts_operators.json` 含该干员记录且其他记录未丢失；`../../.ai-context/hints_merged.json` 含该干员提示；full_data 中该干员的 png/json/wikitext 均已就位。
+`prts_fetch_archives.py` 支持同样的名单参数，优先读取 `.ai-context/wiki_cache/<干员>.wikitext`，否则联网抓取并保存到该中间交付目录。提取档案文本到 `operators/<干员>/<干员>.txt`；`档案N条件` 不是正文，不能混入提示材料。无档案与抓取失败分别记录在过程目录的失败名单。Wiki 限流可能返回 403/429，或返回 HTTP 200 的 HTML 拦截页；不能将拦截页当作有效 wikitext，遇到时退避并稍后重试。
 
-## 阶段 ⑤ AI hint（概要，细节见 prts-batch-hint-agents）
+已知不适合按普通干员抓档案的条目包括 Mechanist、Misery、召唤物、装置、盟约·辅助干员、领主·Sharp；阿米娅(医疗)、阿米娅(近卫)共用基础阿米娅资料，不应伪造独立数据。其他新条目应先人工确认是否为干员。
 
-1. 列出有 `<干员>.txt` 档案的干员，按 15 个/批切到 `hint_batches/batch_XX.txt`
-2. 每批起一个 `model: lite` 后台 agent：读档案 → 写 ≤30 字提示（**禁含干员代号**）→ 落 `hint_batches/out_batch_XX.json`
-3. 合并为 `../../hints_merged.json`，三重校验：0 超长 / 0 代号泄漏 / 与档案覆盖对齐
-4. `prts_generate_info.py` 自动优先采用 AI hint
+## AI hint
 
-## 阶段 ⑥ 交付 arkfeets（平铺拷贝）
+仅对有非空档案且尚无提示的干员生成新提示；全量重做时按 15 人一批，将名单和输出放到 `tmp/Arknights_PRTS/hint_batches/`。可并行派发 AI agent，每个 agent 只读对应 `operators/<干员>/<干员>.txt`，直接写 `out_batch_XX.json`，结构为 `{"干员名":"提示"}`，回复只报告数量与路径。
 
-目标：`D:\workspace\IdeaProjects\arkfeets\server\resource\full_data`
+提示使用中文，概括身份、出身、阵营或经历；**不含干员代号本身，最多 30 字**。合并前核对档案覆盖数、长度和代号泄漏。使用 `prts_merge_hints.py <补丁 JSON 路径>` 合并到 `.ai-context/hints_merged.json`，脚本会校验并按干员名覆盖，不清空已有提示。人工修改单个提示也使用补丁文件，避免直接重写整份汇总。
 
-规则：
-- 三类文件全部**平铺**到目标根，禁止第二层文件夹：
-  - `Arknights_PRTS/*/*.png`（立绘）
-  - `Arknights_PRTS/*/*.json`（信息 JSON）
-  - `wiki_cache/*.wikitext`（干员原始 wikitext，2026-10-21 起纳入交付）
-- 拷贝前校验平铺重名（PNG/JSON 由干员文件夹结构保证唯一；wikitext 文件名即干员名，天然唯一。注意 wiki_cache 文件名做过非法字符替换 `[\\/:*?"<>|]` → `_`，如 `阿米娅(医疗)` 不受影响，但含半角特殊字符的干员名在目标处的文件名可能与文件夹名不完全一致，属预期）
-- 幂等：内容相同跳过、不同覆盖
-- 目标内 `demo.png`/`demo.json` 是 arkfeets 自带占位文件，不删不覆盖
+## 同名 JSON
 
-## 总验收清单（全量/增量跑完都过一遍）
+`prts_generate_info.py` 为每张 PNG 写一份同名 JSON 到对应干员工作目录。`name` 是 PNG 文件基名，`answers` 永远先放文件夹名，并按 `1`/`2`/`skin*` 后缀追加精一、精二、皮肤别名；`difficulty` 固定为 simple/medium/hard/hell。`tags` 为单键 map 数组，字段依次为：星级、职业、分支、位置、性别、获取途径、势力、出身地、种族、生日、身高、战斗经验、是否感染者、上线时间，空值跳过。不要擅自加回稀有度_内部、情报编号、所属国家、词缀。
 
-1. `PNG 数 == JSON 数`（当前 1368:1368）
-2. `../../prts_operators.json` 记录数与干员文件夹数对账，差值都是已知例外目录（Mechanist/召唤物/装置/海猫等非干员条目，见 prts-wiki-scraper 例外表）
-3. 抽查 JSON：`name == 文件基名`、`answers` 别名规则正确（精一/精二/皮肤）、tags 为 14 字段单键 map
-4. hint 无超长、无代号泄漏
-5. full_data 中 PNG/JSON 数与源一致、wikitext 数与 wiki_cache 一致、无子目录
+`hint` 优先取 AI 汇总；缺失时从客观履历、档案资料一、基础档案中确定性提取。脚本全量重跑是幂等的；规则变更后重跑即可，不要用一次性补丁逐个改文件。验收 PNG 与 JSON 一一对应、`name` 等于文件基名、hint 无超长或代号泄漏。
 
-## 已知例外（勿当 Bug 修）
+## 交付与复核
 
-- 8 个无档案/无 wiki 页目录：Mechanist、Misery、召唤物、装置、盟约·辅助干员、领主·Sharp、全知海猫、小色、海猫、终曲阿米娅、能天使精二A.png —— tags/hint 为空属正常
-- 阿米娅(医疗)、阿米娅(近卫) 在 prts_operators.json 只有基础"阿米娅"条目，变体不硬套
-- Sharp 与 领主·Sharp 有 1 组同图跨文件夹，属合理保留
+先运行 `prts_deliver.py --dry-run`；脚本检查每张 PNG 都有同名 JSON，以及跨文件夹平铺重名。通过后再正式运行，将工作目录的 PNG/JSON 和 `.ai-context/wiki_cache` 中的 wikitext 平铺交付到 `server/resource/full_data/`。内容相同跳过、不同内容原子替换；不会删除目标里已有文件或占位 `demo.*`。可以用 `--names 电弧,令` 只交付指定干员。
+
+交付后在题库后台确认原图与元数据，选择主题、创建题目并裁切谜面；未完成这一步的资源不会自动进入对局。不要直接修改已有题目的 catalogue 或裁切坐标。
+
+## 新干员增量流程
+
+1. 在 `tmp/Arknights_PRTS/operators/<干员>/` 准备 PNG（脚本全量补抓或手工放入），先确认图片来源和命名。
+2. `python -B "$S/prts_operator_info.py" --names <干员> --merge --interval 0.8`，检查汇总表中新增且旧记录仍在。
+3. `python -B "$S/prts_fetch_archives.py" --names <干员> --interval 0.8`，检查档案 TXT 与 `.ai-context/wiki_cache`；无档案时记录原因，不编造内容。
+4. AI 读档案生成最多 30 字、不含代号的 hint 补丁，写入过程目录 `hint_batches/`；运行 `prts_merge_hints.py` 合并。
+5. 运行 `prts_generate_info.py`，校验该干员每张 PNG 的同名 JSON、别名、tags 和 hint。
+6. `prts_deliver.py --names <干员> --dry-run` 后正式交付，再在题库后台创建对应题目并裁切。
+
+完整的操作者步骤也见项目 [README.md](../../../README.md)。

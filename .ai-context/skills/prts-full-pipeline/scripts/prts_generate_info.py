@@ -14,30 +14,19 @@ import os
 import re
 import sys
 import io
+sys.dont_write_bytecode = True
+from prts_paths import WORK_DIR, IMAGE_DIR, OPERATORS_JSON, HINTS_JSON, prepare_workspace
+prepare_workspace()
 
 
 def _force_utf8_stdio():
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-def _find_project_root() -> str:
-    """向上查找包含 Arknights_PRTS 的项目根目录。
-
-    脚本可位于项目根目录，或封装在 .workbuddy/skills/<skill>/scripts/ 下，
-    两种位置都能正确定位数据目录。
-    """
-    d = os.path.dirname(os.path.abspath(__file__))
-    for _ in range(6):
-        if os.path.isdir(os.path.join(d, "Arknights_PRTS")):
-            return d
-        d = os.path.dirname(d)
-    return os.getcwd()
-
-
-ROOT = _find_project_root()
-IMG_DIR = os.path.join(ROOT, "Arknights_PRTS")
-OPS_JSON = os.path.join(ROOT, "prts_operators.json")
-AI_HINTS_JSON = os.path.join(ROOT, "hints_merged.json")  # AI 生成的提示（优先使用）
+ROOT = str(WORK_DIR)
+IMG_DIR = str(IMAGE_DIR)
+OPS_JSON = str(OPERATORS_JSON)
+AI_HINTS_JSON = str(HINTS_JSON)  # AI 生成的提示（优先使用）
 
 # tags 字段顺序
 TAG_FIELDS = ["星级", "职业", "分支", "位置", "性别", "获取途径",

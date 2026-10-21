@@ -1,6 +1,11 @@
 import os
+import sys
 import time
 import re
+import argparse
+sys.dont_write_bytecode = True
+from prts_paths import WORK_DIR, IMAGE_DIR, prepare_workspace
+prepare_workspace()
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
@@ -54,7 +59,7 @@ def parse_image_links(html):
     if not search_results:
         print("未能找到搜索结果容器，请检查网页结构或 URL。")
         # 保存页面以便排查网页结构变化
-        with open("debug_page.html", "w", encoding="utf-8") as f:
+        with open(WORK_DIR / "debug_page.html", "w", encoding="utf-8") as f:
             f.write(html)
         print("已保存当前页面内容到 debug_page.html，用于调试分析")
         return image_links
@@ -217,10 +222,13 @@ def download_image(session, image_page_url, progress_bar=None):
 
 
 def main():
+    argparse.ArgumentParser(description="全量扫描 PRTS 立绘；已有文件自动跳过，无单干员模式").parse_args()
     print("正在启动浏览器...")
     edge_options = EdgeOptions()
     edge_options.add_argument("--disable-gpu")
     edge_options.add_argument(f"user-agent={headers['User-Agent']}")
+    edge_options.add_argument(f"--user-data-dir={WORK_DIR / 'edge-profile'}")
+    edge_options.add_argument(f"--disk-cache-dir={WORK_DIR / 'edge-cache'}")
 
     try:
         service = EdgeService()
@@ -264,9 +272,7 @@ def main():
         print("未能获取到任何图片链接，程序退出。")
         return
 
-    output_dir = os.path.join(find_project_root(), "Arknights_PRTS")
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
+    output_dir = str(IMAGE_DIR)
     os.chdir(output_dir)
 
     # 用 Session 复用 TCP 连接，减少握手开销
@@ -312,7 +318,7 @@ def main():
 
     # 把失败链接落到文件，便于单独重试
     if failed or missing:
-        with open("failed_urls.txt", "w", encoding="utf-8") as f:
+        with open(WORK_DIR / "failed_urls.txt", "w", encoding="utf-8") as f:
             f.write("# network/parse errors\n")
             for url, reason in failed:
                 f.write(f"{url}\t{reason}\n")

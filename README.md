@@ -21,7 +21,7 @@ npm install --registry=https://registry.npmmirror.com
 
 若本机 npm 配置了已经失效的代理，请先修复代理配置；镜像地址仍保持为 `https://registry.npmmirror.com`。
 
-主题缩略图由服务端按需裁切并编码为 WebP，缓存在系统临时目录，不修改原图或题目文件。
+主题缩略图由服务端按需裁切并编码为 WebP，缓存在项目的 `tmp/topic-thumbnails`，不修改原图或题目文件。
 
 ## 配置
 
@@ -97,6 +97,33 @@ Content-Type: application/json
 每张完整图只保存一份。题目以原图像素坐标记录谜面区域，游戏答题阶段实时裁切，揭晓阶段恢复完整原图。详细格式见 [题库资源包格式](docs/题库资源包格式.md)。
 
 题库索引位于 `server/resource/catalogue.json`，单题记录位于 `question_data`，原图及同名默认信息位于 `full_data`。编辑现有题目只原子替换对应单题文件。
+
+## 使用 AI 补充新干员
+
+PRTS 数据流程统一由 [PRTS 流水线 skill](.ai-context/skills/prts-full-pipeline/SKILL.md) 管理。`tmp/Arknights_PRTS/` 仅放可删除的过程文件（图片与档案工作副本、AI 批次、调试及失败记录）；`.ai-context/wiki_cache/`、`.ai-context/prts_operators.json`、`.ai-context/hints_merged.json` 是准备提交 Git 的中间交付物。最终 PNG、同名 JSON 和 wikitext 平铺进 `server/resource/full_data/`。清理 `tmp/` 前，先确认交付和题目维护已完成；清理后不能仅靠 `.ai-context` 重建 PNG 工作副本。
+
+在项目根目录运行，Python 环境需有 `requests`；立绘全量抓取还需 `beautifulsoup4`、`tqdm`、`selenium` 和 Microsoft Edge：
+
+```powershell
+$S = '.ai-context/skills/prts-full-pipeline/scripts'
+$Name = '新干员名称'
+
+# 先把有权使用的 PNG 放入 tmp/Arknights_PRTS/operators/<干员名>/。
+# 大批量补图可运行 python -B "$S/arknights_scraper_edge.py"（仅支持全量扫描）。
+python -B "$S/prts_operator_info.py" --names $Name --merge --interval 0.8
+python -B "$S/prts_fetch_archives.py" --names $Name --interval 0.8
+```
+
+让 AI 阅读 `tmp/Arknights_PRTS/operators/<干员名>/<干员名>.txt`，写一条**不含干员名、最多 30 字**的中文猜图提示，保存为 `tmp/Arknights_PRTS/hint_batches/new.json`，格式为 `{"新干员名称":"提示内容"}`。检查内容后继续：
+
+```powershell
+python -B "$S/prts_merge_hints.py" 'tmp/Arknights_PRTS/hint_batches/new.json'
+python -B "$S/prts_generate_info.py"
+python -B "$S/prts_deliver.py" --names $Name --dry-run
+python -B "$S/prts_deliver.py" --names $Name
+```
+
+增量抓取会按名称合并基础信息，不清空旧干员；提示也按名称合并。交付不会自动登记题目，仍需到后台选择主题、用新原图创建题目并裁切谜面。核对 `.ai-context` 的三个交付位置及 `full_data` 后，再提交数据或清理过程目录。
 
 ## 验证命令
 

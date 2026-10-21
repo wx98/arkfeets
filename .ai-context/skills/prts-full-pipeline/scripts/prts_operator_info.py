@@ -33,6 +33,9 @@ import re
 import sys
 import time
 from urllib.parse import quote
+sys.dont_write_bytecode = True
+from prts_paths import WORK_DIR, IMAGE_DIR, OPERATORS_JSON, prepare_workspace
+prepare_workspace()
 
 try:
     import requests
@@ -138,26 +141,12 @@ def fetch_wikitext(session, name, max_retries=3, backoff=(5, 10, 20)):
     return None
 
 
-def _find_project_root() -> str:
-    """向上查找包含 Arknights_PRTS 的项目根目录。
-
-    脚本可位于项目根目录，或封装在 .workbuddy/skills/<skill>/scripts/ 下，
-    两种位置都能正确定位数据目录。
-    """
-    d = os.path.dirname(os.path.abspath(__file__))
-    for _ in range(6):
-        if os.path.isdir(os.path.join(d, "Arknights_PRTS")):
-            return d
-        d = os.path.dirname(d)
-    return os.getcwd()
-
-
-ROOT = _find_project_root()
+ROOT = str(WORK_DIR)
 
 
 def default_names():
     """默认名单：Arknights_PRTS/ 下的干员文件夹名（去掉 (卫戍协议) 等后缀查 wiki）。"""
-    folder = os.path.join(ROOT, "Arknights_PRTS")
+    folder = str(IMAGE_DIR)
     if not os.path.isdir(folder):
         return []
     names = []
@@ -176,7 +165,12 @@ def main():
     ap.add_argument("--names-file", help="每行一个干员名的文本文件")
     ap.add_argument("--interval", type=float, default=0.8, help="请求间隔秒数")
     ap.add_argument("--output-prefix", default="prts_operators", help="输出文件前缀")
+    ap.add_argument("--merge", action="store_true", help="按名称合并到现有干员表，适用于增量补充")
     args = ap.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", args.output_prefix):
+        ap.error("--output-prefix 只能使用字母、数字、下划线和连字符")
+    if args.merge and args.output_prefix != "prts_operators":
+        ap.error("--merge 只能用于默认的 prts_operators 输出")
 
     if args.names:
         names = [n.strip() for n in args.names.split(",") if n.strip()]
@@ -213,6 +207,11 @@ def main():
 
     # ---- 输出 ----
     if rows:
+        if args.merge and OPERATORS_JSON.exists():
+            existing = json.loads(OPERATORS_JSON.read_text(encoding="utf-8"))
+            merged = {row["名称"]: row for row in existing}
+            merged.update({row["名称"]: row for row in rows})
+            rows = list(merged.values())
         cols = ["名称"] + list(FIELDS.keys())
         csv_path = os.path.join(ROOT, f"{args.output_prefix}.csv")
         with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
@@ -220,9 +219,15 @@ def main():
             w.writeheader()
             w.writerows(rows)
 
-        json_path = os.path.join(ROOT, f"{args.output_prefix}.json")
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(rows, f, ensure_ascii=False, indent=2)
+        json_path = str(OPERATORS_JSON) if args.output_prefix == "prts_operators" else os.path.join(ROOT, f"{args.output_prefix}.json")
+        temporary = os.path.join(ROOT, f".{args.output_prefix}.{os.getpid()}.json.tmp")
+        try:
+            with open(temporary, "w", encoding="utf-8") as f:
+                json.dump(rows, f, ensure_ascii=False, indent=2)
+            os.replace(temporary, json_path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
         print(f"\n完成：成功 {len(rows)}，失败 {len(failed)}")
         print(f"  已写出 {csv_path} / {json_path}")

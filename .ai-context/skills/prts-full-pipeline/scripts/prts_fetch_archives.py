@@ -15,6 +15,9 @@ import re
 import sys
 import time
 import io
+sys.dont_write_bytecode = True
+from prts_paths import WORK_DIR, IMAGE_DIR, WIKI_CACHE_DIR, prepare_workspace
+prepare_workspace()
 
 import requests
 
@@ -30,24 +33,10 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9",
 }
-def _find_project_root() -> str:
-    """向上查找包含 Arknights_PRTS 的项目根目录。
-
-    脚本可位于项目根目录，或封装在 .workbuddy/skills/<skill>/scripts/ 下，
-    两种位置都能正确定位数据目录。
-    """
-    d = os.path.dirname(os.path.abspath(__file__))
-    for _ in range(6):
-        if os.path.isdir(os.path.join(d, "Arknights_PRTS")):
-            return d
-        d = os.path.dirname(d)
-    return os.getcwd()
-
-
-ROOT = _find_project_root()
-IMG_DIR = os.path.join(ROOT, "Arknights_PRTS")
-FAILED_LIST = os.path.join(ROOT, "prts_archives_failed.txt")
-CACHE_DIR = os.path.join(ROOT, "wiki_cache")  # 原始 wikitext 缓存，抓一次后不再请求
+ROOT = str(WORK_DIR)
+IMG_DIR = str(IMAGE_DIR)
+FAILED_LIST = str(WORK_DIR / "prts_archives_failed.txt")
+CACHE_DIR = str(WIKI_CACHE_DIR)  # 原始 wikitext 缓存，抓一次后不再请求
 
 
 def cache_path(name: str) -> str:
@@ -176,6 +165,8 @@ def main():
     else:
         names = sorted(d for d in os.listdir(IMG_DIR)
                        if os.path.isdir(os.path.join(IMG_DIR, d)))
+    if any(re.search(r'[\\/:*?"<>|]', name) or name in (".", "..") for name in names):
+        ap.error("干员名包含非法路径字符")
 
     # 断点续传：跳过已有 txt 的
     todo = []

@@ -1,10 +1,36 @@
 {
+  "appName": "粥粥图猜猜",
   "adminPassword": "admin",
   "adminSessionHours": 8,
   "bilibili": {
-    "blivechatWsUrl": "ws://127.0.0.1:12450/api/chat",
-    "roomId": 0,
+    "blivechatWsUrl": "ws://blive.chat/api/chat",
+    "roomId": 8888888,
     "authCode": "",
-    "uidBlacklist": []
+    "uidBlacklist": [
+      "ba4df9246f974a968ca927943ebf23c8"
+    ],
+    "allowlistMode": false,
+    "uidWhitelist": [],
+    "listeningEnabled": true
+  },
+  "gamePreferences": {
+    "hintRemainingPercent": 40,
+    "revealSeconds": 15,
+    "autoNext": true
+  },
+  "roomSetup": {
+    "topicId": "脚",
+    "difficulty": "medium",
+    "requestedCount": 0,
+    "answerSource": "BILIBILI",
+    "customDuration": false,
+    "durationSeconds": 60,
+    "durationMin": 5,
+    "durationMax": 60,
+    "preferences": {
+      "hintRemainingPercent": 40,
+      "revealSeconds": 15,
+      "autoNext": true
+    }
   }
 }

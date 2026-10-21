@@ -1,6 +1,0 @@
-# FootTrackNet 脚部检测 - Python 依赖（Win10 / Python 3.9 - 3.12）
-# 安装：pip install -r requirements.txt
-ai-edge-litert>=0.5.0
-opencv-python>=4.8
-numpy>=1.24
-gradio>=4.0

@@ -4,8 +4,8 @@
   "adminSessionHours": 8,
   "bilibili": {
     "blivechatWsUrl": "ws://blive.chat/api/chat",
-    "roomId": 8888888,
-    "authCode": "",
+    "roomId": 1649171,
+    "authCode": "FSL1WPPN3G8W9",
     "uidBlacklist": [
       "ba4df9246f974a968ca927943ebf23c8"
     ],

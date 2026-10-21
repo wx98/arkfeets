@@ -287,3 +287,5 @@ dist
 /release/
 /tmp/
 .workbuddy/
+/foot_detect/
+/*.zip
